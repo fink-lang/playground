@@ -297,6 +297,11 @@ pub struct ParsedDocument {
     /// JSON diagnostics string, ready to return to VS Code.
     diagnostics: String,
 
+    /// JSON lexer tokens string — full token list from the lexer.
+    /// Each token: {kind, src, line, col, endLine, endCol}
+    /// line/col are 0-based. Available even when parsing fails.
+    lexer_tokens: String,
+
     /// Source location for each CPS node (indexed by CpsId.0).
     /// None if the CPS node has no AST origin or origin has no location.
     node_locs: Vec<Option<Loc>>,
@@ -315,8 +320,9 @@ impl ParsedDocument {
     /// Parse source code and pre-compute all provider data.
     #[wasm_bindgen(constructor)]
     pub fn new(src: &str) -> ParsedDocument {
-        // --- Lexer diagnostics ---
+        // --- Lex: collect all tokens + diagnostics in one pass ---
         let mut diag_entries: Vec<String> = Vec::new();
+        let mut token_entries: Vec<String> = Vec::new();
         let lexer = lexer::tokenize_with_seps(src, &[
             b"+", b"-", b"*", b"/", b"//", b"**", b"%", b"%%", b"/%",
             b"==", b"!=", b"<", b"<=", b">", b">=", b"><",
@@ -324,17 +330,22 @@ impl ParsedDocument {
             b".", b"|", b"|=", b"=", b"..", b"...",
         ]);
         for tok in lexer {
+            let line = tok.loc.start.line.saturating_sub(1);
+            let col = tok.loc.start.col;
+            let end_line = tok.loc.end.line.saturating_sub(1);
+            let end_col = tok.loc.end.col;
+            let src_escaped = tok.src.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+            let kind = format!("{:?}", tok.kind);
+            token_entries.push(format!(
+                r#"{{"kind":"{kind}","src":"{src_escaped}","line":{line},"col":{col},"endLine":{end_line},"endCol":{end_col}}}"#
+            ));
             if tok.kind == TokenKind::Err {
-                let line = tok.loc.start.line.saturating_sub(1);
-                let col = tok.loc.start.col;
-                let end_line = tok.loc.end.line.saturating_sub(1);
-                let end_col = tok.loc.end.col;
-                let msg = tok.src.replace('\\', "\\\\").replace('"', "\\\"");
                 diag_entries.push(format!(
-                    r#"{{"line":{line},"col":{col},"endLine":{end_line},"endCol":{end_col},"message":"{msg}","source":"lexer","severity":"error"}}"#
+                    r#"{{"line":{line},"col":{col},"endLine":{end_line},"endCol":{end_col},"message":"{src_escaped}","source":"lexer","severity":"error"}}"#
                 ));
             }
         }
+        let lexer_tokens = format!("[{}]", token_entries.join(","));
 
         // --- Parse ---
         let parse_result = match parser::parse(src) {
@@ -352,6 +363,7 @@ impl ParsedDocument {
                 return ParsedDocument {
                     semantic_tokens: vec![],
                     diagnostics: format!("[{}]", diag_entries.join(",")),
+                    lexer_tokens,
                     node_locs: vec![],
                     bind_ids: vec![],
                     idents: vec![],
@@ -469,10 +481,18 @@ impl ParsedDocument {
         ParsedDocument {
             semantic_tokens,
             diagnostics: format!("[{}]", diag_entries.join(",")),
+            lexer_tokens,
             node_locs,
             bind_ids,
             idents,
         }
+    }
+
+    /// Return all lexer tokens as a JSON string.
+    /// Each token: {kind, src, line, col, endLine, endCol} — line/col are 0-based.
+    /// Available even when parsing fails.
+    pub fn get_tokens(&self) -> String {
+        self.lexer_tokens.clone()
     }
 
     /// Return delta-encoded semantic tokens.

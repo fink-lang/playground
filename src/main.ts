@@ -40,14 +40,14 @@ async function loadAnalysisWasm(): Promise<void> {
   console.log('[fink] loading analysis WASM from', base)
 
   console.log('[fink] fetching wasm binary...')
-  const wasmBin = await fetch(`${base}fink_wasm_bg.wasm`).then(r => {
-    if (!r.ok) throw new Error(`fink_wasm_bg.wasm: ${r.status}`)
+  const wasmBin = await fetch(`${base}fink_playground_wasm_bg.wasm`).then(r => {
+    if (!r.ok) throw new Error(`fink_playground_wasm_bg.wasm: ${r.status}`)
     return r.arrayBuffer()
   })
   console.log('[fink] wasm binary fetched, size:', wasmBin.byteLength)
 
   console.log('[fink] importing glue module...')
-  const mod = await import(/* @vite-ignore */ `${base}fink_wasm.js`)
+  const mod = await import(/* @vite-ignore */ `${base}fink_playground_wasm.js`)
   console.log('[fink] glue module imported, calling init...')
   await mod.default(wasmBin)
   ParsedDocument = mod.ParsedDocument

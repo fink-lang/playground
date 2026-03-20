@@ -17,6 +17,7 @@
 //   6. Copy src/index.html
 
 import * as esbuild from 'esbuild'
+import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { createRequire } from 'module'
@@ -25,6 +26,17 @@ const require = createRequire(import.meta.url)
 const OUT = 'build'
 
 fs.mkdirSync(OUT, { recursive: true })
+fs.mkdirSync('lib', { recursive: true })
+
+// ---------------------------------------------------------------------------
+// 0. Build Rust WASM crate → lib/
+// ---------------------------------------------------------------------------
+
+execSync('wasm-pack build --target web', { cwd: 'crate', stdio: 'inherit' })
+for (const file of ['fink_playground_wasm.js', 'fink_playground_wasm_bg.wasm', 'fink_playground_wasm.d.ts']) {
+  fs.copyFileSync(`crate/pkg/${file}`, `lib/${file}`)
+}
+console.log('  built crate → lib/')
 
 // ---------------------------------------------------------------------------
 // 1. Monaco editor worker (iife — workers don't use ES modules by default)
@@ -139,7 +151,7 @@ console.log('  copied onig.wasm')
 //    Served as plain static files; loaded at runtime via fetch + dynamic import.
 // ---------------------------------------------------------------------------
 
-for (const file of ['fink_wasm.js', 'fink_wasm_bg.wasm']) {
+for (const file of ['fink_playground_wasm.js', 'fink_playground_wasm_bg.wasm']) {
   const src = path.join('lib', file)
   if (!fs.existsSync(src)) {
     console.warn(`  WARNING: ${src} not found — semantic tokens will be disabled`)

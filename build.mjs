@@ -63,8 +63,6 @@ await esbuild.build({
   loader: {
     '.ttf': 'file',
   },
-  // monaco-textmate uses Node's 'path' only for a debug basename call.
-  alias: { path: './src/path-stub.js' },
   minify: false, // keep readable during development
 })
 console.log('  bundled playground.js')

@@ -20,7 +20,7 @@ version = "0.1.0"
 source = "git+https://github.com/fink-lang/fink.git?branch=main#5c9e5ce94f4a6595ad8a7b7dc72f0687bf773e8b"
 
 [[package]]
-name = "fink-wasm"
+name = "fink-playground-wasm"
 version = "0.1.0"
 dependencies = [
  "fink",

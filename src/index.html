@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Playground — ƒink</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/hack-font@3/build/web/hack.css">
+  <link rel="stylesheet" href="monaco.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #1e1e1e;
+      --surface:    #252526;
+      --border:     #3e3e42;
+      --text:       #cccccc;
+      --text-dim:   #858585;
+      --btn-bg:     #0e639c;
+      --btn-hover:  #1177bb;
+      --ok:         #4ec9b0;
+      --err:        #f44747;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    /* ── header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      height: 40px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .header a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .header a:hover { color: var(--text); }
+
+    .header-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .header-spacer { flex: 1; }
+
+    .header-btn {
+      padding: 4px 14px;
+      border: none;
+      border-radius: 3px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .header-btn:disabled { opacity: 0.5; cursor: default; }
+
+    #run-btn {
+      background: var(--btn-bg);
+      color: #fff;
+    }
+    #run-btn:hover:not(:disabled) { background: var(--btn-hover); }
+
+    #share-btn {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    #share-btn:hover:not(:disabled) { color: #fff; border-color: var(--text-dim); }
+    #share-btn.copied { color: var(--ok); border-color: var(--ok); }
+
+    /* ── workspace ── */
+    .workspace {
+      display: flex;
+      height: calc(100vh - 40px);
+    }
+
+    #editor {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* ── output pane ── */
+    .output-pane {
+      width: 380px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .output-label {
+      padding: 6px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+
+    #output {
+      flex: 1;
+      padding: 12px 14px;
+      font-family: "Hack", "Consolas", "Menlo", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-y: auto;
+      color: var(--text);
+    }
+    #output.running { color: var(--text-dim); }
+    #output.ok      { color: var(--ok); }
+    #output.error   { color: var(--err); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/"><img src="favicon-192.png" alt="ƒink" height="24" style="display:block;"></a>
+    <span class="header-title">Playground</span>
+    <span class="header-spacer"></span>
+    <button id="share-btn" class="header-btn">Share</button>
+    <button id="run-btn" class="header-btn">&#9654; Run</button>
+  </div>
+
+  <div class="workspace">
+    <div id="editor"></div>
+    <div class="output-pane">
+      <div class="output-label">Output</div>
+      <pre id="output">Click ▶ Run to execute.</pre>
+    </div>
+  </div>
+
+  <script type="module" src="playground.js"></script>
+</body>
+</html>

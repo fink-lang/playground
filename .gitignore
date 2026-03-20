@@ -2,8 +2,7 @@ node_modules/
 build/
 dist/
 target/
-*.wasm
-!src/**/*.wasm
+lib/
 .DS_Store
 
 # Claude local config

@@ -1,0 +1,113 @@
+<!-- Fink playground fragment — embed this in a page that provides:
+     - monaco.css loaded
+     - Hack (or equivalent monospace) font loaded
+     - --fink-editor-* CSS variables set (see src/theme.ts for full list)
+-->
+<style>
+  .fink-playground {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background: var(--fink-editor-bg, #1e1e1e);
+    color: var(--fink-editor-fg, #cccccc);
+  }
+
+  .fink-playground-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    height: 36px;
+    background: var(--fink-editor-surface, #252526);
+    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
+    flex-shrink: 0;
+  }
+
+  .fink-playground-spacer { flex: 1; }
+
+  .fink-playground-btn {
+    padding: 3px 12px;
+    border: none;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .fink-playground-btn:disabled { opacity: 0.5; cursor: default; }
+
+  #fink-run-btn {
+    background: var(--fink-editor-btn-bg, #0e639c);
+    color: #fff;
+  }
+  #fink-run-btn:hover:not(:disabled) { background: var(--fink-editor-btn-hover, #1177bb); }
+
+  #fink-share-btn {
+    background: var(--fink-editor-surface, #252526);
+    color: var(--fink-editor-fg, #cccccc);
+    border: 1px solid var(--fink-editor-border, #3e3e42);
+  }
+  #fink-share-btn:hover:not(:disabled) { color: #fff; border-color: var(--fink-editor-fg-dim, #858585); }
+  #fink-share-btn.copied { color: var(--fink-editor-ok, #4ec9b0); border-color: var(--fink-editor-ok, #4ec9b0); }
+
+  .fink-playground-workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  #fink-editor {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .fink-playground-output-pane {
+    width: 380px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--fink-editor-border, #3e3e42);
+    background: var(--fink-editor-bg, #1e1e1e);
+  }
+
+  .fink-playground-output-label {
+    padding: 6px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fink-editor-fg-dim, #858585);
+    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
+  }
+
+  #fink-output {
+    flex: 1;
+    padding: 12px 14px;
+    font-family: "Hack", "Consolas", "Menlo", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    color: var(--fink-editor-fg, #cccccc);
+  }
+  #fink-output.running { color: var(--fink-editor-fg-dim, #858585); }
+  #fink-output.ok      { color: var(--fink-editor-ok,  #4ec9b0); }
+  #fink-output.error   { color: var(--fink-editor-err, #f44747); }
+</style>
+
+<div class="fink-playground">
+  <div class="fink-playground-toolbar">
+    <span class="fink-playground-spacer"></span>
+    <button id="fink-share-btn" class="fink-playground-btn">Share</button>
+    <button id="fink-run-btn"   class="fink-playground-btn">&#9654; Run</button>
+  </div>
+
+  <div class="fink-playground-workspace">
+    <div id="fink-editor"></div>
+    <div class="fink-playground-output-pane">
+      <div class="fink-playground-output-label">Output</div>
+      <pre id="fink-output">Click ▶ Run to execute.</pre>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="playground.js"></script>

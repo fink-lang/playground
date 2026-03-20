@@ -7,7 +7,7 @@
 //   2. Bundle src/main.ts → playground.js  (esm)
 //   3. Copy Monaco CSS + codicon font (fix relative font path)
 //   4. Copy TM grammar assets (onig.wasm + fink.tmLanguage.json)
-//      Grammar is sourced from ../fink/fink.tmLanguage.json and transformed:
+//      Grammar is sourced from src/fink.tmLanguage.json and transformed:
 //        - Remove top-level include of source.jsx.fink (no JSX support needed)
 //        - Replace all "include": "source.fink" self-references with "$self"
 //          (avoids re-entrant grammar loads in vscode-textmate)
@@ -92,7 +92,7 @@ fs.copyFileSync(onigWasmSrc, `${OUT}/onig.wasm`)
 console.log('  copied onig.wasm')
 
 {
-  const grammarSrc = path.resolve('..', 'fink', 'fink.tmLanguage.json')
+  const grammarSrc = path.resolve('src', 'fink.tmLanguage.json')
   const grammar = JSON.parse(fs.readFileSync(grammarSrc, 'utf8'))
 
   // 1. Remove top-level source.jsx.fink include

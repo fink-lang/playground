@@ -62,7 +62,8 @@ export function defineTheme(): void {
       // Lexer token scopes (from FinkTokenizer)
       { token: 'variable.other.constant',      foreground: ident },
       { token: 'constant.numeric',             foreground: number },
-      { token: 'constant.character.escape',    foreground: escape },
+      { token: 'constant.character.escape',      foreground: escape },
+      { token: 'constant.character.escape.fink', foreground: 'D7BA7D' },
       { token: 'comment',                      foreground: comment },
       { token: 'string',                       foreground: string },
       { token: 'punctuation.section.embedded', foreground: keyword },

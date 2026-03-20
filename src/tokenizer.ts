@@ -34,7 +34,9 @@ function kindToScope(kind: string, src: string): string | null {
       return 'variable.other.constant'
     case 'Int':
     case 'Float':
-    case 'Decimal':      return 'constant.numeric'
+    case 'Decimal':
+    case 'NumDigits':    return 'constant.numeric'
+    case 'NumMarker':    return 'constant.character.escape.fink'
     case 'Sep':          return (src === '|=' || src === '|') ? 'keyword.control' : 'fink-operator'
     case 'Colon':        return 'fink-operator'
     case 'Comma':        return 'punctuation'
@@ -45,6 +47,7 @@ function kindToScope(kind: string, src: string): string | null {
     case 'StrStart':
     case 'StrEnd':       return 'string'
     case 'StrText':      return 'string'
+    case 'StrEscape':    return 'constant.character.escape'
     case 'StrExprStart':
     case 'StrExprEnd':   return 'punctuation.section.embedded'
     case 'Comment':      return 'comment'

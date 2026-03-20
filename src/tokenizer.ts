@@ -14,7 +14,7 @@
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 // Raw token from get_tokens() JSON
-interface LexToken {
+export interface LexToken {
   kind: string
   src: string
   line: number   // 0-based
@@ -25,7 +25,7 @@ interface LexToken {
 
 // Monaco scope string for each lexer TokenKind.
 // Multi-line tokens (BlockCont, BlockEnd) have no visible src — skip them.
-function kindToScope(kind: string, src: string): string | null {
+export function kindToScope(kind: string, src: string): string | null {
   switch (kind) {
     case 'Ident':
       if (src === '_') return 'keyword.control'
@@ -73,11 +73,10 @@ export class FinkTokenizer {
   private cacheVersion = -1
 
   // Call this whenever ParsedDocument changes (after every re-parse).
-  update(tokensJson: string, modelVersion: number): void {
+  update(tokens: LexToken[], modelVersion: number): void {
     if (modelVersion === this.cacheVersion) return
     this.cacheVersion = modelVersion
 
-    const tokens: LexToken[] = JSON.parse(tokensJson)
     const byLine: Map<number, LineTokens> = new Map()
 
     for (const tok of tokens) {

@@ -59,34 +59,118 @@
   #fink-editor {
     flex: 1;
     min-width: 0;
+    max-width: 80ch;
   }
 
-  .fink-playground-output-pane {
-    width: 380px;
-    flex-shrink: 0;
+  .fink-playground-right-pane {
+    flex: 1;
+    min-width: 280px;
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--fink-editor-border, #3e3e42);
     background: var(--fink-editor-bg, #1e1e1e);
   }
 
-  .fink-playground-output-label {
-    padding: 6px 12px;
+  .fink-playground-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
+    flex-shrink: 0;
+  }
+
+  .fink-tab {
+    padding: 6px 14px;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fink-editor-fg-dim, #858585);
-    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .fink-tab:hover { color: var(--fink-editor-fg, #cccccc); }
+  .fink-tab.active {
+    color: var(--fink-editor-fg, #cccccc);
+    border-bottom-color: var(--fink-editor-fg-dim, #858585);
   }
 
-  #fink-output {
+  .fink-tab-content {
     flex: 1;
+    min-height: 0;
+    position: relative;
+  }
+
+  .fink-tab-panel {
+    display: none;
+    overflow-y: auto;
+    position: absolute;
+    inset: 0;
+  }
+  .fink-tab-panel.active { display: block; }
+
+  /* --- Token highlight decoration in editor --- */
+
+  .fink-token-highlight {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
+  }
+
+  /* --- Tokens panel --- */
+
+  #fink-tokens {
+    padding: 8px 10px;
+    display: none;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 4px;
+  }
+  #fink-tokens.active { display: flex; }
+
+  .fink-token-pill {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 2px 7px;
+    border: 1px solid var(--fink-editor-border, #3e3e42);
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .fink-token-pill:hover {
+    background: var(--fink-editor-surface, #252526);
+  }
+  .fink-token-pill.fink-token-active {
+    background: rgba(255, 255, 255, 0.08);
+    border-width: 2px;
+    border-color: var(--fink-editor-fg-dim, #858585);
+  }
+
+  .fink-token-kind {
+    font-size: 12px;
+    font-family: inherit;
+  }
+
+  .fink-token-src {
+    font-size: 9px;
+    font-family: "Hack", "Consolas", "Menlo", monospace;
+    opacity: 0.5;
+    max-width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* --- Output panel --- */
+
+  #fink-output {
     padding: 12px 14px;
     font-family: "Hack", "Consolas", "Menlo", monospace;
     font-size: 13px;
     line-height: 1.5;
     white-space: pre-wrap;
-    overflow-y: auto;
     color: var(--fink-editor-fg, #cccccc);
   }
   #fink-output.running { color: var(--fink-editor-fg-dim, #858585); }
@@ -103,9 +187,15 @@
 
   <div class="fink-playground-workspace">
     <div id="fink-editor"></div>
-    <div class="fink-playground-output-pane">
-      <div class="fink-playground-output-label">Output</div>
-      <pre id="fink-output">Click ▶ Run to execute.</pre>
+    <div class="fink-playground-right-pane">
+      <div class="fink-playground-tabs">
+        <button class="fink-tab active" data-tab="fink-tokens">Tokens</button>
+        <button class="fink-tab" data-tab="fink-output">Output</button>
+      </div>
+      <div class="fink-tab-content">
+        <div id="fink-tokens" class="fink-tab-panel active"></div>
+        <pre id="fink-output" class="fink-tab-panel">Click ▶ Run to execute.</pre>
+      </div>
     </div>
   </div>
 </div>

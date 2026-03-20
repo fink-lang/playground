@@ -20,7 +20,8 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
-import { FinkTokenizer } from './tokenizer.js'
+import { FinkTokenizer, type LexToken } from './tokenizer.js'
+import { TokensPanel } from './tokens-panel.js'
 import { defineTheme } from './theme.js'
 
 // ---------------------------------------------------------------------------
@@ -48,10 +49,14 @@ function reparse(src: string, modelVersion: number): void {
   const t1 = performance.now()
   lastSemanticTokens = doc.get_semantic_tokens()
   lastDiagnostics = doc.get_diagnostics()
-  const tokensJson = doc.get_tokens()
+  const rawTokensJson = doc.get_tokens()
+  const highlightTokensJson = doc.get_highlight_tokens()
   doc.free()
   const t2 = performance.now()
-  tokenizer.update(tokensJson, modelVersion)
+  const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
+  tokenizer.update(highlightTokens, modelVersion)
+  const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
+  tokensPanel?.update(rawTokens)
   const t3 = performance.now()
   console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
 }
@@ -87,6 +92,9 @@ monaco.languages.register({ id: 'fink', extensions: ['.fnk'] })
 // Tokenizer is populated after each WASM parse (see semantic tokens provider).
 const tokenizer = new FinkTokenizer()
 tokenizer.register()
+
+// Tokens panel — initialized after the editor is created (see below).
+let tokensPanel: TokensPanel | null = null
 
 monaco.languages.setLanguageConfiguration('fink', {
   comments: {
@@ -202,6 +210,33 @@ editor.onDidChangeModelContent(() => {
   const model = editor.getModel()
   if (!model) return
   reparse(model.getValue(), model.getVersionId())
+})
+
+// ---------------------------------------------------------------------------
+// Right pane — tabbed panel (Tokens, Output, …)
+// ---------------------------------------------------------------------------
+
+// Tab switching
+for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
+  tab.addEventListener('click', () => {
+    document.querySelector('.fink-tab.active')?.classList.remove('active')
+    document.querySelector('.fink-tab-panel.active')?.classList.remove('active')
+    tab.classList.add('active')
+    document.getElementById(tab.dataset.tab!)?.classList.add('active')
+  })
+}
+
+// Tokens panel — pill view with bidirectional cursor sync
+tokensPanel = new TokensPanel(
+  document.getElementById('fink-tokens')!,
+  editor,
+)
+
+editor.onDidChangeCursorPosition(e => {
+  tokensPanel.highlightAtPosition(
+    e.position.lineNumber - 1,
+    e.position.column - 1,
+  )
 })
 
 // ---------------------------------------------------------------------------

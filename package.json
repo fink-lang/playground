@@ -7,11 +7,7 @@
     "dev": "node build.mjs && npx servor build index.html 3000 --reload"
   },
   "dependencies": {
-    "monaco-editor": "^0.52.2",
-    "monaco-editor-textmate": "^4.0.0",
-    "monaco-textmate": "^3.0.1",
-    "vscode-oniguruma": "^2.0.1",
-    "vscode-textmate": "^9.3.2"
+    "monaco-editor": "^0.52.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

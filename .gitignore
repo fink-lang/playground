@@ -1,0 +1,11 @@
+node_modules/
+build/
+dist/
+target/
+*.wasm
+!src/**/*.wasm
+.DS_Store
+
+# Claude local config
+.claude/settings.local.json
+.claude.local/

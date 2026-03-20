@@ -106,8 +106,11 @@ for (const file of ['fink_playground_wasm.js', 'fink_playground_wasm_bg.wasm']) 
 }
 
 // ---------------------------------------------------------------------------
-// 6. index.html
+// 6. fragment.html (embeddable artifact) + index.html (dev wrapper)
 // ---------------------------------------------------------------------------
+
+fs.copyFileSync('src/fragment.html', `${OUT}/fragment.html`)
+console.log('  copied src/fragment.html')
 
 fs.copyFileSync('src/index.html', `${OUT}/index.html`)
 console.log('  copied src/index.html')

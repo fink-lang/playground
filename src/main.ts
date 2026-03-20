@@ -21,6 +21,7 @@ import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSeman
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer } from './tokenizer.js'
+import { defineTheme } from './theme.js'
 
 // ---------------------------------------------------------------------------
 // Analysis WASM (semantic tokens, diagnostics)
@@ -164,73 +165,10 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
 })
 
 // ---------------------------------------------------------------------------
-// Theme
+// Theme — reads colors from CSS variables (set by embedding page or dev wrapper)
 // ---------------------------------------------------------------------------
 
-// Monaco standalone's getTokenStyleMetadata() resolves semantic token colors
-// via the TextMate rule matcher (_match), not a separate semanticTokenColors
-// map. We add rules whose `token` field matches the semantic token type names
-// (and optional dot-separated modifiers) returned by the provider.
-// Theme mirrors the colors in static/style.css (the static-site highlighter).
-// Rules here cover:
-//   a) semantic token types returned by the WASM provider (function, variable, …)
-//   b) TM scopes not already handled by the vs-dark base theme
-monaco.editor.defineTheme('fink-dark', {
-  base: 'vs-dark',
-  inherit: true,
-  rules: [
-    // Semantic tokens (must match TOKEN_* constants in vscode-fink/src/lib.rs)
-    { token: 'function',          foreground: 'DCDCAA' },  // .fn
-    { token: 'variable',          foreground: '9CDCFE' },  // .rec-key
-    { token: 'variable.readonly', foreground: '4FC1FF' },  // .ident / .prop
-    { token: 'property',          foreground: '9CDCFE' },  // .rec-key
-    { token: 'block-name',        foreground: '4FC1FF' },  // .blk (bright blue)
-    { token: 'tag-left',          foreground: '569CD6' },  // .tag
-    { token: 'tag-right',         foreground: '569CD6' },  // .tag
-
-    // TM token rules — explicit entries matching the strings returned by
-    // tmToMonacoToken. Monaco standalone's `inherit: true` pulls in vs-dark
-    // base colors for standard scopes, but we add them explicitly here so
-    // they are guaranteed to be present.
-    { token: 'comment',                      foreground: '6A9955' },
-    { token: 'comment.line',                 foreground: '6A9955' },
-    { token: 'constant.language',            foreground: '569CD6' },
-    { token: 'constant.numeric',             foreground: 'B5CEA8' },
-    { token: 'constant.character.escape',    foreground: 'D7BA7D' },  // \n \t \x \u etc + 0x/0b prefix
-    { token: 'entity.name.function',         foreground: 'DCDCAA' },
-    { token: 'entity.name.tag',              foreground: '569CD6' },  // .tag
-    { token: 'entity.name.tag.numeric',      foreground: '569CD6' },  // numeric tag suffix (10sec, 1.5min)
-    { token: 'entity.name.tag.postfix',      foreground: '569CD6' },  // postfix tag 10sec
-    { token: 'entity.name.tag.string',       foreground: '569CD6' },  // template tag fmt, raw
-    { token: 'entity.name.type',             foreground: '4EC9B0' },
-    { token: 'entity.other.attribute-name',  foreground: '9CDCFE' },
-    { token: 'invalid',                      foreground: 'F44747' },
-    { token: 'keyword',                      foreground: '569CD6' },
-    { token: 'keyword.control',              foreground: 'C586C0' },
-    { token: 'fink-operator',                foreground: 'D4D4D4' },  // operators (remapped in tmToMonacoToken)
-    { token: 'fink-bracket',                 foreground: 'DCDCAA' },  // brackets [] {} () (.br-1 gold)
-    { token: 'punctuation.section.embedded', foreground: '569CD6' },  // ${ }
-    { token: 'storage',                      foreground: '569CD6' },
-    { token: 'storage.modifier',             foreground: '569CD6' },
-    { token: 'storage.type',                 foreground: '4EC9B0' },
-    { token: 'string',                       foreground: 'CE9178' },
-    { token: 'variable',                     foreground: '9CDCFE' },
-    { token: 'variable.language',            foreground: '569CD6' },
-    { token: 'variable.other.constant',      foreground: '4FC1FF' },
-    { token: 'variable.other.property',      foreground: '4FC1FF' },
-    { token: 'entity.name.label',            foreground: '4FC1FF' },
-  ],
-  colors: {
-    // Bracket pair colorization — matched to static site .br-1/2/3 palette
-    'editorBracketHighlight.foreground1': '#BDBB85',
-    'editorBracketHighlight.foreground2': '#CC76D1',
-    'editorBracketHighlight.foreground3': '#4A9DF8',
-    'editorBracketHighlight.foreground4': '#BDBB85',
-    'editorBracketHighlight.foreground5': '#CC76D1',
-    'editorBracketHighlight.foreground6': '#4A9DF8',
-    'editorBracketHighlight.unexpectedBracket.foreground': '#FF000066',
-  },
-})
+defineTheme()
 
 // ---------------------------------------------------------------------------
 // Editor
@@ -238,7 +176,7 @@ monaco.editor.defineTheme('fink-dark', {
 
 const INITIAL_CODE = ``
 
-const editorEl = document.getElementById('editor')!
+const editorEl = document.getElementById('fink-editor')!
 const editor = monaco.editor.create(editorEl, {
   value: INITIAL_CODE,
   language: 'fink',
@@ -270,8 +208,8 @@ editor.onDidChangeModelContent(() => {
 // Run
 // ---------------------------------------------------------------------------
 
-const runBtn = document.getElementById('run-btn') as HTMLButtonElement
-const outputEl = document.getElementById('output')!
+const runBtn = document.getElementById('fink-run-btn') as HTMLButtonElement
+const outputEl = document.getElementById('fink-output')!
 
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true
@@ -369,7 +307,7 @@ if (initialHash) {
 }
 
 // Share button: encode current source → update hash → copy URL to clipboard.
-const shareBtn = document.getElementById('share-btn') as HTMLButtonElement
+const shareBtn = document.getElementById('fink-share-btn') as HTMLButtonElement
 shareBtn.addEventListener('click', async () => {
   const encoded = await encodeSource(editor.getValue())
   history.replaceState(null, '', '#' + encoded)

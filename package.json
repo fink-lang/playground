@@ -1,0 +1,24 @@
+{
+  "name": "fink-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs && npx servor build index.html 3000 --reload"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.2",
+    "monaco-editor-textmate": "^4.0.0",
+    "monaco-textmate": "^3.0.1",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@semantic-release/github": "^11.0.0",
+    "esbuild": "^0.25.1",
+    "semantic-release": "^24.0.0",
+    "servor": "^4.0.2",
+    "typescript": "^5.7.3"
+  }
+}

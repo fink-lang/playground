@@ -93,61 +93,7 @@ fs.writeFileSync(`${OUT}/monaco.css`, css)
 console.log('  copied monaco.css')
 
 // ---------------------------------------------------------------------------
-// 4. TM grammar assets (onig.wasm + fink.tmLanguage.json)
-// ---------------------------------------------------------------------------
-
-const onigWasmSrc = path.join(
-  path.dirname(require.resolve('vscode-oniguruma/package.json')),
-  'release/onig.wasm',
-)
-fs.copyFileSync(onigWasmSrc, `${OUT}/onig.wasm`)
-console.log('  copied onig.wasm')
-
-{
-  const grammarSrc = path.resolve('src', 'fink.tmLanguage.json')
-  const grammar = JSON.parse(fs.readFileSync(grammarSrc, 'utf8'))
-
-  // 1. Remove top-level source.jsx.fink include
-  if (grammar.patterns) {
-    grammar.patterns = grammar.patterns.filter(
-      p => p.include !== 'source.jsx.fink',
-    )
-  }
-
-  // 2. Walk the entire grammar tree and apply transforms to every node
-  function transformNode(node) {
-    if (Array.isArray(node)) {
-      return node
-        .filter(item => {
-          // Strip meta.scope-example.* rules
-          const name = item.name ?? item.scopeName
-          return !name?.startsWith('meta.scope-example.')
-        })
-        .map(transformNode)
-    }
-    if (node && typeof node === 'object') {
-      const out = {}
-      for (const [k, v] of Object.entries(node)) {
-        if (k === 'include' && v === 'source.fink') {
-          out[k] = '$self'
-        } else if (k === 'patterns' || k === 'repository' || k === 'captures' || k === 'beginCaptures' || k === 'endCaptures') {
-          out[k] = transformNode(v)
-        } else {
-          out[k] = (v && typeof v === 'object') ? transformNode(v) : v
-        }
-      }
-      return out
-    }
-    return node
-  }
-
-  const transformed = transformNode(grammar)
-  fs.writeFileSync(`${OUT}/fink.tmLanguage.json`, JSON.stringify(transformed))
-  console.log('  transformed + wrote fink.tmLanguage.json')
-}
-
-// ---------------------------------------------------------------------------
-// 5. Analysis WASM (fink_wasm.js + fink_wasm_bg.wasm)
+// 4. Analysis WASM (fink_playground_wasm.js + fink_playground_wasm_bg.wasm)
 //    Served as plain static files; loaded at runtime via fetch + dynamic import.
 // ---------------------------------------------------------------------------
 

@@ -1,8 +1,10 @@
 // Fink playground — Monaco editor + semantic tokens + WASI run pipeline.
 //
-// Analysis (semantic tokens, diagnostics) uses the same WASM that powers
-// the vscode-fink extension, loaded via the data-URL dynamic-import trick
-// so it can be served as plain static files without a bundler touching it.
+// Tokenization: driven by the WASM lexer (ParsedDocument.get_tokens()) via
+// FinkTokenizer, bypassing TM grammar + oniguruma entirely.
+//
+// Analysis (semantic tokens, diagnostics, go-to-def, references) uses the
+// playground WASM crate loaded via dynamic import at runtime.
 //
 // Code execution uses the WASI shim (wasi-shim.ts) running in a sandboxed
 // iframe. The compiler slot is a placeholder for now (see compiler.ts).
@@ -16,10 +18,9 @@
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
-import { loadWASM, createOnigScanner, createOnigString } from 'vscode-oniguruma'
-import { Registry, INITIAL, parseRawGrammar } from 'vscode-textmate'
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
+import { FinkTokenizer } from './tokenizer.js'
 
 // ---------------------------------------------------------------------------
 // Analysis WASM (semantic tokens, diagnostics)
@@ -32,6 +33,27 @@ let ParsedDocument: any = null
 // so it doesn't race with the async WASM load on first page render.
 let resolveWasmReady!: () => void
 const wasmReady = new Promise<void>(resolve => { resolveWasmReady = resolve })
+
+// Last parse result — shared between the syntactic tokenizer and the semantic
+// tokens / diagnostics provider. Reparsed synchronously on every content change
+// so the tokenizer cache is always up-to-date before Monaco asks for tokens.
+let lastSemanticTokens: Uint32Array = new Uint32Array(0)
+let lastDiagnostics: string = '[]'
+
+function reparse(src: string, modelVersion: number): void {
+  if (!ParsedDocument) return
+  const t0 = performance.now()
+  const doc = new ParsedDocument(src)
+  const t1 = performance.now()
+  lastSemanticTokens = doc.get_semantic_tokens()
+  lastDiagnostics = doc.get_diagnostics()
+  const tokensJson = doc.get_tokens()
+  doc.free()
+  const t2 = performance.now()
+  tokenizer.update(tokensJson, modelVersion)
+  const t3 = performance.now()
+  console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
+}
 
 async function loadAnalysisWasm(): Promise<void> {
   // Derive the base URL of this module so assets are found regardless of
@@ -56,10 +78,14 @@ async function loadAnalysisWasm(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Language registration + TM grammar
+// Language registration + tokenizer
 // ---------------------------------------------------------------------------
 
 monaco.languages.register({ id: 'fink', extensions: ['.fnk'] })
+
+// Tokenizer is populated after each WASM parse (see semantic tokens provider).
+const tokenizer = new FinkTokenizer()
+tokenizer.register()
 
 monaco.languages.setLanguageConfiguration('fink', {
   comments: {
@@ -101,87 +127,6 @@ monaco.languages.setLanguageConfiguration('fink', {
   },
 })
 
-// TMToMonacoToken: maps TM scope array → Monaco theme token string.
-// Tries progressively shorter scope prefixes until a themed color is found.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-// TMToMonacoToken: maps TM scope array → Monaco theme token string.
-// Iterates from innermost scope (scopes[0]) outward, trying progressively
-// shorter dot-prefixes, returning the first that has a themed foreground color.
-// Innermost-first ensures more-specific rules (e.g. entity.name.tag.numeric)
-// win over outer container scopes (e.g. constant.numeric).
-// Scopes array from vscode-textmate is outermost-first; innermost (most
-// specific) is scopes[scopes.length - 1]. Iterate innermost-first so that
-// capture-level scopes (e.g. constant.character.escape inside constant.numeric)
-// win over their container scope.
-function tmToMonacoToken(editor: any, scopes: string[]): string {
-  const result = (() => {
-    for (let i = scopes.length - 1; i >= 0; i--) {
-      const scope = scopes[i]
-      for (let j = scope.length - 1; j >= 0; j--) {
-        if (scope[j] === '.') {
-          const token = scope.slice(0, j)
-          if (editor._themeService._theme._tokenTheme._match(token)._foreground > 1)
-            return token
-        }
-      }
-    }
-    return ''
-  })()
-  // Monaco collapses keyword.operator → keyword at theme-build time, losing
-  // the distinct color. Remap operator scopes to a custom token name that
-  // has its own entry in the theme rules.
-  // keyword.operator.* scopes resolve to the `keyword` color via Monaco's
-  // prefix matching. Intercept them before the fallback and return our custom
-  // token name that has a distinct white color entry.
-  if (scopes.some(s => s.startsWith('keyword.operator')))
-    return 'fink-operator'
-  return result
-}
-
-// Loaded once; grammar wiring needs to run after the editor is created.
-async function loadTmGrammar(editor: monaco.editor.IStandaloneCodeEditor): Promise<void> {
-  const base = new URL('.', import.meta.url).href
-
-  // vscode-oniguruma — fetch as ArrayBuffer so MIME type doesn't matter.
-  const onigBuffer = await fetch(`${base}onig.wasm`).then(r => r.arrayBuffer())
-  await loadWASM({ data: onigBuffer })
-
-  const finkGrammarContent = await fetch(`${base}fink.tmLanguage.json`).then(r => r.text())
-
-  // vscode-textmate Registry — handles $self/$base recursion correctly.
-  const registry = new Registry({
-    onigLib: Promise.resolve({ createOnigScanner, createOnigString }),
-    async loadGrammar(scopeName) {
-      if (scopeName === 'source.fink') {
-        return parseRawGrammar(finkGrammarContent, 'fink.tmLanguage.json')
-      }
-      return null
-    },
-  })
-
-  const grammar = await registry.loadGrammar('source.fink')
-  if (!grammar) throw new Error('Failed to load fink grammar')
-
-  monaco.languages.setTokensProvider('fink', {
-    getInitialState: () => ({ ruleStack: INITIAL, clone() { return this }, equals(o: unknown) { return o === this } }),
-    tokenize(line, state: { ruleStack: typeof INITIAL }) {
-      const result = grammar.tokenizeLine(line, state.ruleStack)
-      return {
-        endState: { ruleStack: result.ruleStack, clone() { return this }, equals(o: unknown) { return o === this } },
-        tokens: result.tokens.map((t, i) => {
-          let scopes = tmToMonacoToken(editor, t.scopes)
-          if (scopes === '') {
-            const end = i + 1 < result.tokens.length ? result.tokens[i + 1].startIndex : line.length
-            const ch = line.slice(t.startIndex, end).trim()
-            if ('[]{}()'.includes(ch)) scopes = 'fink-bracket'
-          }
-          return { startIndex: t.startIndex, scopes }
-        }),
-      }
-    },
-  })
-  console.log('[fink] TM grammar loaded')
-}
 
 // Semantic token legend must match TOKEN_* constants in vscode-fink/src/lib.rs
 const TOKEN_TYPES = ['function', 'variable', 'property', 'block-name', 'tag-left', 'tag-right']
@@ -193,12 +138,10 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
   },
   async provideDocumentSemanticTokens(model) {
     await wasmReady
-    const src = model.getValue()
-    const doc = new ParsedDocument(src)
-    const data = doc.get_semantic_tokens()
-    const diag = doc.get_diagnostics()
-    doc.free()
-    const parsed = JSON.parse(diag) as Array<{
+    // Reparse here handles the initial load (before onDidChangeModelContent fires).
+    // Subsequent keystrokes are already reparsed synchronously in onDidChangeModelContent.
+    reparse(model.getValue(), model.getVersionId())
+    const parsed = JSON.parse(lastDiagnostics) as Array<{
       line: number, col: number, endLine: number, endCol: number,
       message: string, source: string, severity: string
     }>
@@ -215,7 +158,7 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
           : monaco.MarkerSeverity.Info,
       source: d.source,
     })))
-    return { data, resultId: undefined }
+    return { data: lastSemanticTokens, resultId: undefined }
   },
   releaseDocumentSemanticTokens() {},
 })
@@ -313,6 +256,14 @@ const editor = monaco.editor.create(editorEl, {
   insertSpaces: true,
   detectIndentation: false,
   automaticLayout: true,
+})
+
+// Reparse synchronously on every content change so the tokenizer cache is
+// updated before Monaco asks for syntactic tokens on the next frame.
+editor.onDidChangeModelContent(() => {
+  const model = editor.getModel()
+  if (!model) return
+  reparse(model.getValue(), model.getVersionId())
 })
 
 // ---------------------------------------------------------------------------
@@ -437,8 +388,4 @@ shareBtn.addEventListener('click', async () => {
 
 loadAnalysisWasm().catch(err => {
   console.error('Analysis WASM failed to load — semantic tokens disabled:', err)
-})
-
-loadTmGrammar(editor).catch(err => {
-  console.error('TM grammar failed to load — falling back to plain tokenization:', err)
 })

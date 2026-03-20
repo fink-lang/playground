@@ -22,6 +22,7 @@ import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
+import { CpsPanel } from './cps-panel.js'
 import { defineTheme } from './theme.js'
 
 // ---------------------------------------------------------------------------
@@ -51,12 +52,14 @@ function reparse(src: string, modelVersion: number): void {
   lastDiagnostics = doc.get_diagnostics()
   const rawTokensJson = doc.get_tokens()
   const highlightTokensJson = doc.get_highlight_tokens()
+  const cpsJson = doc.get_cps()
   doc.free()
   const t2 = performance.now()
   const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
-  tokenizer.update(highlightTokens, modelVersion)
+  tokenizer.update(highlightTokens, modelVersion, src)
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
+  cpsPanel?.update(cpsJson, ParsedDocument)
   const t3 = performance.now()
   console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
 }
@@ -95,6 +98,8 @@ tokenizer.register()
 
 // Tokens panel — initialized after the editor is created (see below).
 let tokensPanel: TokensPanel | null = null
+// CPS panel — initialized after the editor is created (see below).
+let cpsPanel: CpsPanel | null = null
 
 monaco.languages.setLanguageConfiguration('fink', {
   comments: {
@@ -223,6 +228,7 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     document.querySelector('.fink-tab-panel.active')?.classList.remove('active')
     tab.classList.add('active')
     document.getElementById(tab.dataset.tab!)?.classList.add('active')
+    if (tab.dataset.tab === 'fink-cps') cpsPanel?.layout()
   })
 }
 
@@ -232,8 +238,18 @@ tokensPanel = new TokensPanel(
   editor,
 )
 
+// CPS panel — read-only Monaco editor with sourcemap-based cursor sync
+cpsPanel = new CpsPanel(
+  document.getElementById('fink-cps')!,
+  editor,
+)
+
 editor.onDidChangeCursorPosition(e => {
   tokensPanel.highlightAtPosition(
+    e.position.lineNumber - 1,
+    e.position.column - 1,
+  )
+  cpsPanel?.syncFromSource(
     e.position.lineNumber - 1,
     e.position.column - 1,
   )

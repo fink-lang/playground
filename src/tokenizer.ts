@@ -68,14 +68,48 @@ export function kindToScope(kind: string, src: string): string | null {
 // Each entry is a sorted array of {startIndex, scopes} ready for Monaco.
 type LineTokens = Array<{ startIndex: number; scopes: string }>
 
+// Build a per-line map from UTF-8 byte offset → UTF-16 code unit offset.
+// Monaco startIndex is UTF-16; Rust col is UTF-8 byte offset.
+// U+0000–U+007F: 1 byte / 1 unit
+// U+0080–U+07FF: 2 bytes / 1 unit  (includes ·  U+00B7)
+// U+0800–U+FFFF: 3 bytes / 1 unit
+// U+10000+:      4 bytes / 2 units (surrogates)
+function buildByteToUtf16Maps(src: string): Map<number, number>[] {
+  const lines = src.split('\n')
+  return lines.map(line => {
+    const map = new Map<number, number>()
+    let byteOff = 0
+    let utf16Off = 0
+    for (const ch of line) {
+      map.set(byteOff, utf16Off)
+      const cp = ch.codePointAt(0)!
+      byteOff  += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
+      utf16Off += cp < 0x10000 ? 1 : 2
+    }
+    map.set(byteOff, utf16Off) // one past end
+    return map
+  })
+}
+
 export class FinkTokenizer {
   private cache: LineTokens[] = []
   private cacheVersion = -1
 
   // Call this whenever ParsedDocument changes (after every re-parse).
-  update(tokens: LexToken[], modelVersion: number): void {
-    if (modelVersion === this.cacheVersion) return
+  // src is the full source text used to convert byte offsets to UTF-16.
+  // Pass modelVersion=-1 to force update unconditionally (e.g. for CPS editor).
+  update(tokens: LexToken[], modelVersion: number, src: string): void {
+    if (modelVersion !== -1 && modelVersion === this.cacheVersion) return
     this.cacheVersion = modelVersion
+
+    const b2u = buildByteToUtf16Maps(src)
+
+    // Convert a byte-offset col on a given line to a UTF-16 code unit offset.
+    const toUtf16 = (line: number, byteCol: number): number => {
+      const map = b2u[line]
+      if (!map) return byteCol
+      return map.get(byteCol) ?? byteCol
+    }
 
     const byLine: Map<number, LineTokens> = new Map()
 
@@ -86,14 +120,14 @@ export class FinkTokenizer {
       if (tok.line === tok.endLine) {
         // Single-line token
         if (!byLine.has(tok.line)) byLine.set(tok.line, [])
-        byLine.get(tok.line)!.push({ startIndex: tok.col, scopes: scope })
+        byLine.get(tok.line)!.push({ startIndex: toUtf16(tok.line, tok.col), scopes: scope })
       } else {
         // Multi-line token (e.g. block indent tokens, multi-line strings):
         // emit on every line it spans.
         for (let l = tok.line; l <= tok.endLine; l++) {
           if (!byLine.has(l)) byLine.set(l, [])
           // First line starts at tok.col; continuation lines start at col 0.
-          byLine.get(l)!.push({ startIndex: l === tok.line ? tok.col : 0, scopes: scope })
+          byLine.get(l)!.push({ startIndex: l === tok.line ? toUtf16(l, tok.col) : 0, scopes: scope })
         }
       }
     }
@@ -109,8 +143,8 @@ export class FinkTokenizer {
     }
   }
 
-  // Register this tokenizer with Monaco for the 'fink' language.
-  register(): void {
+  // Register this tokenizer with Monaco for the given language ID (default: 'fink').
+  register(langId = 'fink'): void {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this
 
@@ -128,7 +162,7 @@ export class FinkTokenizer {
       },
     })
 
-    monaco.languages.setTokensProvider('fink', {
+    monaco.languages.setTokensProvider(langId, {
       getInitialState: () => makeState(0, self.cacheVersion),
       tokenize(_lineText: string, state: State) {
         const lineTokens = self.cache[state.line] ?? []

@@ -8,6 +8,251 @@ use fink::passes::cps::ir::CpsId;
 use fink::passes::cps::transform::lower_expr;
 use fink::passes::name_res::{self, Resolution};
 
+// ---------------------------------------------------------------------------
+// String literal sub-parsing: split StrText into text + escape segments
+// ---------------------------------------------------------------------------
+
+/// A segment of a StrText token — either plain text or an escape sequence.
+#[derive(Debug, PartialEq)]
+struct StrSegment<'a> {
+    kind: &'static str, // "StrText" or "StrEscape"
+    src: &'a str,
+    col_offset: u32, // offset from the start of the StrText token
+}
+
+fn is_hex(b: u8) -> bool {
+    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+}
+
+fn is_bin(b: u8) -> bool {
+    matches!(b, b'0' | b'1')
+}
+
+/// Split a StrText token's raw source into StrText and StrEscape segments.
+///
+/// Recognised escape sequences:
+///   \n \r \v \t \b \f \\ \' \$  — single-char escapes
+///   \bNN                         — binary literal (exactly 2 binary digits)
+///   \xNN                         — hex byte (exactly 2 hex digits)
+///   \uNNNNNN                     — unicode codepoint (1–6 hex digits, _ separators)
+///   \u{N..N}                     — unicode codepoint, braced (hex digits + _ separators)
+///
+/// Note: \b is ambiguous — \b followed by exactly 2 binary digits (0/1) is
+/// treated as a binary escape; otherwise \b alone is a backspace escape.
+fn split_str_escapes(src: &str) -> Vec<StrSegment<'_>> {
+    let bytes = src.as_bytes();
+    let mut segments: Vec<StrSegment<'_>> = Vec::new();
+    let mut i = 0;
+    let mut text_start = 0;
+
+    while i < bytes.len() {
+        if bytes[i] != b'\\' || i + 1 >= bytes.len() {
+            i += 1;
+            continue;
+        }
+
+        // Found a backslash — flush preceding text
+        if i > text_start {
+            segments.push(StrSegment {
+                kind: "StrText",
+                src: &src[text_start..i],
+                col_offset: text_start as u32,
+            });
+        }
+
+        let esc_start = i;
+        i += 1; // skip backslash
+        match bytes[i] {
+            b'x' => {
+                // \xNN — exactly 2 hex digits
+                if i + 2 < bytes.len() && is_hex(bytes[i + 1]) && is_hex(bytes[i + 2]) {
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            }
+            b'u' => {
+                // \u{...} or \uNNNNNN
+                if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    // Braced form: consume until closing }
+                    let mut j = i + 2;
+                    while j < bytes.len() && bytes[j] != b'}' {
+                        j += 1;
+                    }
+                    if j < bytes.len() {
+                        j += 1; // include the }
+                    }
+                    i = j;
+                } else {
+                    // Bare form: 1–6 hex digits with _ separators
+                    let mut j = i + 1;
+                    let mut digits = 0;
+                    while j < bytes.len() && digits < 6 {
+                        if bytes[j] == b'_' {
+                            j += 1;
+                        } else if is_hex(bytes[j]) {
+                            digits += 1;
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if digits > 0 {
+                        i = j;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'b' => {
+                // \bNN (binary) if followed by exactly 2 binary digits,
+                // otherwise \b (backspace)
+                if i + 2 < bytes.len() && is_bin(bytes[i + 1]) && is_bin(bytes[i + 2]) {
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            }
+            // Single-char escapes: n r v t f \ ' $
+            b'n' | b'r' | b'v' | b't' | b'f' | b'\\' | b'\'' | b'$' => {
+                i += 1;
+            }
+            // Unknown escape — just the backslash + next char
+            _ => {
+                i += 1;
+            }
+        }
+
+        segments.push(StrSegment {
+            kind: "StrEscape",
+            src: &src[esc_start..i],
+            col_offset: esc_start as u32,
+        });
+        text_start = i;
+    }
+
+    // Trailing text
+    if text_start < bytes.len() {
+        segments.push(StrSegment {
+            kind: "StrText",
+            src: &src[text_start..],
+            col_offset: text_start as u32,
+        });
+    }
+
+    segments
+}
+
+// ---------------------------------------------------------------------------
+// Numeric literal sub-parsing: split prefix (0x, 0b, 0o) and exponent (e, d)
+// ---------------------------------------------------------------------------
+
+/// A segment of a numeric token — either digits or a prefix/exponent marker.
+#[derive(Debug, PartialEq)]
+struct NumSegment<'a> {
+    kind: &'static str, // "NumDigits" or "NumMarker"
+    src: &'a str,
+    col_offset: u32,
+}
+
+/// Split a numeric literal's raw source into digit and marker segments.
+///
+/// Markers highlighted separately:
+///   0x, 0b, 0o          — base prefix (Int tokens)
+///   e, e+, e-            — float exponent
+///   d, d+, d-            — decimal suffix/exponent
+fn split_num_parts<'a>(src: &'a str, kind: &str) -> Vec<NumSegment<'a>> {
+    let bytes = src.as_bytes();
+
+    // Base prefixes: 0x, 0b, 0o — only the letter is the marker, not the leading 0
+    if kind == "Int" && bytes.len() >= 2 && bytes[0] == b'0' {
+        match bytes[1] {
+            b'x' | b'b' | b'o' => {
+                let mut segs = vec![
+                    NumSegment {
+                        kind: "NumDigits",
+                        src: &src[..1],
+                        col_offset: 0,
+                    },
+                    NumSegment {
+                        kind: "NumMarker",
+                        src: &src[1..2],
+                        col_offset: 1,
+                    },
+                ];
+                if src.len() > 2 {
+                    segs.push(NumSegment {
+                        kind: "NumDigits",
+                        src: &src[2..],
+                        col_offset: 2,
+                    });
+                }
+                return segs;
+            }
+            _ => {}
+        }
+    }
+
+    // Float exponent: find 'e' not at start — only 'e' is the marker
+    if kind == "Float" {
+        if let Some(pos) = bytes.iter().position(|&b| b == b'e') {
+            if pos > 0 {
+                let mut segs = vec![NumSegment {
+                    kind: "NumDigits",
+                    src: &src[..pos],
+                    col_offset: 0,
+                }];
+                segs.push(NumSegment {
+                    kind: "NumMarker",
+                    src: &src[pos..pos + 1],
+                    col_offset: pos as u32,
+                });
+                if pos + 1 < bytes.len() {
+                    segs.push(NumSegment {
+                        kind: "NumDigits",
+                        src: &src[pos + 1..],
+                        col_offset: (pos + 1) as u32,
+                    });
+                }
+                return segs;
+            }
+        }
+    }
+
+    // Decimal suffix: find 'd' not at start — only 'd' is the marker
+    if kind == "Decimal" {
+        if let Some(pos) = bytes.iter().position(|&b| b == b'd') {
+            if pos > 0 {
+                let mut segs = vec![NumSegment {
+                    kind: "NumDigits",
+                    src: &src[..pos],
+                    col_offset: 0,
+                }];
+                segs.push(NumSegment {
+                    kind: "NumMarker",
+                    src: &src[pos..pos + 1],
+                    col_offset: pos as u32,
+                });
+                if pos + 1 < bytes.len() {
+                    segs.push(NumSegment {
+                        kind: "NumDigits",
+                        src: &src[pos + 1..],
+                        col_offset: (pos + 1) as u32,
+                    });
+                }
+                return segs;
+            }
+        }
+    }
+
+    // No markers — return the whole thing as digits
+    vec![NumSegment {
+        kind: "NumDigits",
+        src,
+        col_offset: 0,
+    }]
+}
+
 // Token type indices (must match TypeScript legend)
 const TOKEN_FUNCTION: u32 = 0;
 const TOKEN_VARIABLE: u32 = 1;
@@ -334,6 +579,41 @@ impl ParsedDocument {
             let col = tok.loc.start.col;
             let end_line = tok.loc.end.line.saturating_sub(1);
             let end_col = tok.loc.end.col;
+
+            if tok.kind == TokenKind::StrText {
+                // Sub-parse escape sequences within string text.
+                // StrText tokens are always single-line (newlines split them).
+                let segments = split_str_escapes(tok.src);
+                for seg in &segments {
+                    let seg_col = col + seg.col_offset;
+                    let seg_end_col = seg_col + seg.src.len() as u32;
+                    let seg_src_escaped = seg.src.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+                    token_entries.push(format!(
+                        r#"{{"kind":"{kind}","src":"{seg_src_escaped}","line":{line},"col":{seg_col},"endLine":{end_line},"endCol":{seg_end_col}}}"#,
+                        kind = seg.kind,
+                    ));
+                }
+                continue;
+            }
+
+            if matches!(tok.kind, TokenKind::Int | TokenKind::Float | TokenKind::Decimal) {
+                // Sub-parse numeric prefixes/exponents.
+                let kind_str = format!("{:?}", tok.kind);
+                let segments = split_num_parts(tok.src, &kind_str);
+                if segments.len() > 1 {
+                    for seg in &segments {
+                        let seg_col = col + seg.col_offset;
+                        let seg_end_col = seg_col + seg.src.len() as u32;
+                        token_entries.push(format!(
+                            r#"{{"kind":"{kind}","src":"{src}","line":{line},"col":{seg_col},"endLine":{end_line},"endCol":{seg_end_col}}}"#,
+                            kind = seg.kind,
+                            src = seg.src,
+                        ));
+                    }
+                    continue;
+                }
+            }
+
             let src_escaped = tok.src.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
             let kind = format!("{:?}", tok.kind);
             token_entries.push(format!(
@@ -558,5 +838,280 @@ impl ParsedDocument {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_escapes() {
+        let segs = split_str_escapes("hello world");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrText", src: "hello world", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn empty_string() {
+        let segs = split_str_escapes("");
+        assert_eq!(segs, vec![]);
+    }
+
+    #[test]
+    fn single_char_escapes() {
+        // \n \r \v \t \f \\ \' \$
+        for (input, esc) in [
+            (r"\n", r"\n"), (r"\r", r"\r"), (r"\v", r"\v"),
+            (r"\t", r"\t"), (r"\f", r"\f"),
+            (r"\\", r"\\"), (r"\'", r"\'"), (r"\$", r"\$"),
+        ] {
+            let segs = split_str_escapes(input);
+            assert_eq!(segs, vec![
+                StrSegment { kind: "StrEscape", src: esc, col_offset: 0 },
+            ], "failed for input: {input}");
+        }
+    }
+
+    #[test]
+    fn backspace_escape() {
+        // \b alone is backspace
+        let segs = split_str_escapes(r"\b");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\b", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn binary_escape() {
+        // \b followed by 2 binary digits is a binary escape
+        let segs = split_str_escapes(r"\b01");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\b01", col_offset: 0 },
+        ]);
+        let segs = split_str_escapes(r"\b10");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\b10", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn binary_vs_backspace() {
+        // \b followed by non-binary digit: backspace only
+        let segs = split_str_escapes(r"\b2");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\b", col_offset: 0 },
+            StrSegment { kind: "StrText", src: "2", col_offset: 2 },
+        ]);
+        // \b followed by only 1 binary digit: backspace only
+        let segs = split_str_escapes(r"\b0x");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\b", col_offset: 0 },
+            StrSegment { kind: "StrText", src: "0x", col_offset: 2 },
+        ]);
+    }
+
+    #[test]
+    fn hex_escape() {
+        let segs = split_str_escapes(r"\x0f");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\x0f", col_offset: 0 },
+        ]);
+        let segs = split_str_escapes(r"\xFF");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\xFF", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn hex_escape_incomplete() {
+        // Only 1 hex digit — not a valid hex escape, still an escape though
+        let segs = split_str_escapes(r"\x1");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\x", col_offset: 0 },
+            StrSegment { kind: "StrText", src: "1", col_offset: 2 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_bare() {
+        let segs = split_str_escapes(r"\u0041");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u0041", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_bare_with_separators() {
+        let segs = split_str_escapes(r"\u00_41");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u00_41", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_bare_max_digits() {
+        let segs = split_str_escapes(r"\u10FFFF");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u10FFFF", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_bare_with_trailing() {
+        // 6 hex digits consumed, rest is text
+        let segs = split_str_escapes(r"\u10FFFFhello");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u10FFFF", col_offset: 0 },
+            StrSegment { kind: "StrText", src: "hello", col_offset: 8 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_braced() {
+        let segs = split_str_escapes(r"\u{0041}");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u{0041}", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn unicode_braced_with_separators() {
+        let segs = split_str_escapes(r"\u{10_ff_ff}");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\u{10_ff_ff}", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn mixed_text_and_escapes() {
+        let segs = split_str_escapes(r"hello\nworld\x0f!");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrText", src: "hello", col_offset: 0 },
+            StrSegment { kind: "StrEscape", src: r"\n", col_offset: 5 },
+            StrSegment { kind: "StrText", src: "world", col_offset: 7 },
+            StrSegment { kind: "StrEscape", src: r"\x0f", col_offset: 12 },
+            StrSegment { kind: "StrText", src: "!", col_offset: 16 },
+        ]);
+    }
+
+    #[test]
+    fn consecutive_escapes() {
+        let segs = split_str_escapes(r"\n\t\\");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrEscape", src: r"\n", col_offset: 0 },
+            StrSegment { kind: "StrEscape", src: r"\t", col_offset: 2 },
+            StrSegment { kind: "StrEscape", src: r"\\", col_offset: 4 },
+        ]);
+    }
+
+    #[test]
+    fn trailing_backslash() {
+        // Lone trailing backslash — treated as unknown escape (no next char)
+        let segs = split_str_escapes("hello\\");
+        assert_eq!(segs, vec![
+            StrSegment { kind: "StrText", src: "hello\\", col_offset: 0 },
+        ]);
+    }
+
+    // --- Numeric literal sub-parsing ---
+
+    #[test]
+    fn num_plain_int() {
+        let segs = split_num_parts("123", "Int");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "123", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn num_hex_prefix() {
+        let segs = split_num_parts("0xFF", "Int");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "0", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "x", col_offset: 1 },
+            NumSegment { kind: "NumDigits", src: "FF", col_offset: 2 },
+        ]);
+    }
+
+    #[test]
+    fn num_bin_prefix() {
+        let segs = split_num_parts("0b1010", "Int");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "0", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "b", col_offset: 1 },
+            NumSegment { kind: "NumDigits", src: "1010", col_offset: 2 },
+        ]);
+    }
+
+    #[test]
+    fn num_oct_prefix() {
+        let segs = split_num_parts("0o77", "Int");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "0", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "o", col_offset: 1 },
+            NumSegment { kind: "NumDigits", src: "77", col_offset: 2 },
+        ]);
+    }
+
+    #[test]
+    fn num_float_exponent() {
+        let segs = split_num_parts("1.2e10", "Float");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "1.2", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "e", col_offset: 3 },
+            NumSegment { kind: "NumDigits", src: "10", col_offset: 4 },
+        ]);
+    }
+
+    #[test]
+    fn num_float_exponent_signed() {
+        let segs = split_num_parts("1.2e+10", "Float");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "1.2", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "e", col_offset: 3 },
+            NumSegment { kind: "NumDigits", src: "+10", col_offset: 4 },
+        ]);
+        let segs = split_num_parts("1.2e-3", "Float");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "1.2", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "e", col_offset: 3 },
+            NumSegment { kind: "NumDigits", src: "-3", col_offset: 4 },
+        ]);
+    }
+
+    #[test]
+    fn num_plain_float() {
+        // No exponent — just digits
+        let segs = split_num_parts("3.14", "Float");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "3.14", col_offset: 0 },
+        ]);
+    }
+
+    #[test]
+    fn num_decimal_suffix() {
+        let segs = split_num_parts("123d", "Decimal");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "123", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "d", col_offset: 3 },
+        ]);
+    }
+
+    #[test]
+    fn num_decimal_exponent() {
+        let segs = split_num_parts("1.2d+10", "Decimal");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "1.2", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "d", col_offset: 3 },
+            NumSegment { kind: "NumDigits", src: "+10", col_offset: 4 },
+        ]);
+        let segs = split_num_parts("1.2d-3", "Decimal");
+        assert_eq!(segs, vec![
+            NumSegment { kind: "NumDigits", src: "1.2", col_offset: 0 },
+            NumSegment { kind: "NumMarker", src: "d", col_offset: 3 },
+            NumSegment { kind: "NumDigits", src: "-3", col_offset: 4 },
+        ]);
     }
 }

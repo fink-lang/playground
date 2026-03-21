@@ -4,6 +4,7 @@ use wasm_bindgen::prelude::*;
 use fink::ast::{self, Node, NodeKind};
 use fink::lexer::{self, TokenKind};
 use fink::parser;
+use fink::passes::closure_lifting::lift_all;
 use fink::passes::cps::fmt as cps_fmt;
 use fink::passes::cps::ir::CpsId;
 use fink::passes::cps::transform::lower_expr;
@@ -862,8 +863,27 @@ impl ParsedDocument {
         let ast_index = ast::build_index(&r);
         let cps = lower_expr(&r.root);
         let ctx = cps_fmt::Ctx { origin: &cps.origin, ast_index: &ast_index, captures: None };
-        let node = cps_fmt::to_node(&cps.root, &ctx);
-        let (code, map) = fink::ast::fmt::fmt_mapped(&node, "input.fnk");
+        let (code, map) = cps_fmt::fmt_with_mapped(&cps.root, &ctx, "input.fnk");
+        let map_json = map.to_json();
+        let code_escaped = code.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+        let map_escaped = map_json.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+        format!(r#"{{"code":"{code_escaped}","map":"{map_escaped}"}}"#)
+    }
+
+    /// Return lifted CPS output as JSON: `{"code": "...", "map": "..."}`.
+    /// Runs the full pipeline: parse → CPS → cont_lifting + closure_lifting (lift_all)
+    /// → format with sourcemap.
+    /// Returns `{"code":"","map":""}` if the source fails to parse.
+    pub fn get_cps_lifted(&self) -> String {
+        let r = match parser::parse(&self.src) {
+            Ok(r) => r,
+            Err(_) => return r#"{"code":"","map":""}"#.to_string(),
+        };
+        let ast_index = ast::build_index(&r);
+        let cps = lower_expr(&r.root);
+        let (lifted, _) = lift_all(cps, &ast_index);
+        let ctx = cps_fmt::Ctx { origin: &lifted.origin, ast_index: &ast_index, captures: None };
+        let (code, map) = cps_fmt::fmt_with_mapped(&lifted.root, &ctx, "input.fnk");
         let map_json = map.to_json();
         let code_escaped = code.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
         let map_escaped = map_json.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");

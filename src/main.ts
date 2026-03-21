@@ -53,6 +53,7 @@ function reparse(src: string, modelVersion: number): void {
   const rawTokensJson = doc.get_tokens()
   const highlightTokensJson = doc.get_highlight_tokens()
   const cpsJson = doc.get_cps()
+  const cpsLiftedJson = doc.get_cps_lifted()
   doc.free()
   const t2 = performance.now()
   const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
@@ -60,6 +61,9 @@ function reparse(src: string, modelVersion: number): void {
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
   cpsPanel?.update(cpsJson, ParsedDocument)
+  cpsPanel?.updateSrcTokens(highlightTokens)
+  cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
+  cpsPanelLifted?.updateSrcTokens(highlightTokens)
   const t3 = performance.now()
   console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
 }
@@ -98,8 +102,9 @@ tokenizer.register()
 
 // Tokens panel — initialized after the editor is created (see below).
 let tokensPanel: TokensPanel | null = null
-// CPS panel — initialized after the editor is created (see below).
+// CPS panels — initialized after the editor is created (see below).
 let cpsPanel: CpsPanel | null = null
+let cpsPanelLifted: CpsPanel | null = null
 
 monaco.languages.setLanguageConfiguration('fink', {
   comments: {
@@ -152,8 +157,6 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
   },
   async provideDocumentSemanticTokens(model) {
     await wasmReady
-    // Reparse here handles the initial load (before onDidChangeModelContent fires).
-    // Subsequent keystrokes are already reparsed synchronously in onDidChangeModelContent.
     reparse(model.getValue(), model.getVersionId())
     const parsed = JSON.parse(lastDiagnostics) as Array<{
       line: number, col: number, endLine: number, endCol: number,
@@ -229,6 +232,7 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     tab.classList.add('active')
     document.getElementById(tab.dataset.tab!)?.classList.add('active')
     if (tab.dataset.tab === 'fink-cps') cpsPanel?.layout()
+    if (tab.dataset.tab === 'fink-cps-lifted') cpsPanelLifted?.layout()
   })
 }
 
@@ -244,12 +248,47 @@ cpsPanel = new CpsPanel(
   editor,
 )
 
+// Lifted CPS panel — CPS after cont_lifting + closure_lifting
+cpsPanelLifted = new CpsPanel(
+  document.getElementById('fink-cps-lifted')!,
+  editor,
+)
+
+// When a CPS panel becomes active, clear token decoration and the other CPS panel.
+cpsPanel.onActivate = () => { tokensPanel.clearEditorHighlight(); cpsPanelLifted?.clearAll() }
+cpsPanelLifted.onActivate = () => { tokensPanel.clearEditorHighlight(); cpsPanel?.clearAll() }
+// When one CPS panel highlights into the source editor, clear the other's src highlight.
+cpsPanel.onWillHighlightSrc = () => cpsPanelLifted?.clearSrcHighlight()
+cpsPanelLifted.onWillHighlightSrc = () => cpsPanel?.clearSrcHighlight()
+
+editor.onDidFocusEditorText(() => {
+  tokensPanel.clearEditorHighlight()
+  cpsPanel?.clearAll()
+  cpsPanelLifted?.clearAll()
+  cpsPanelLifted?.clearSrcHighlight()
+  cpsPanel?.syncFromSource(
+    editor.getPosition()!.lineNumber - 1,
+    editor.getPosition()!.column - 1,
+  )
+  cpsPanelLifted?.syncFromSource(
+    editor.getPosition()!.lineNumber - 1,
+    editor.getPosition()!.column - 1,
+  )
+})
+
 editor.onDidChangeCursorPosition(e => {
+  tokensPanel.clearEditorHighlight()
+  cpsPanel?.clearSrcHighlight()
+  cpsPanelLifted?.clearSrcHighlight()
   tokensPanel.highlightAtPosition(
     e.position.lineNumber - 1,
     e.position.column - 1,
   )
   cpsPanel?.syncFromSource(
+    e.position.lineNumber - 1,
+    e.position.column - 1,
+  )
+  cpsPanelLifted?.syncFromSource(
     e.position.lineNumber - 1,
     e.position.column - 1,
   )

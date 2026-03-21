@@ -10,6 +10,7 @@
 //   srcToFirst[src_line][src_col] → { cpsLine, cpsCol }  (first mapping for each src pos)
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 
 // ---------------------------------------------------------------------------
@@ -98,32 +99,64 @@ function lookupSrcToCps(lookup: PosMap, srcLine: number, srcCol: number): Mappin
   return lookup.srcToFirst.get(srcLine * 100000 + srcCol) ?? null
 }
 
+// Find the token that contains (line, col) — cursor can be anywhere inside it.
+function tokenAtPos(tokens: LexToken[], line: number, col: number): LexToken | null {
+  for (const t of tokens) {
+    if (t.line > line) break
+    if (t.line === line && t.col <= col && col < t.endCol) return t
+  }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // CPS panel
 // ---------------------------------------------------------------------------
 
-// Register a separate language for the CPS editor so it has its own tokenizer
-// instance, independent of the source editor's 'fink' tokenizer.
-monaco.languages.register({ id: 'fink-cps', extensions: [] })
-const cpsTokenizer = new FinkTokenizer()
-cpsTokenizer.register('fink-cps')
+// Each CpsPanel gets its own language ID and FinkTokenizer instance so their
+// token caches don't collide when both panels update in the same reparse cycle.
+let cpsPanelCount = 0
+
+const TOKEN_TYPES = ['function', 'variable', 'property', 'block-name', 'tag-left', 'tag-right']
+const TOKEN_MODIFIERS = ['readonly']
 
 export class CpsPanel {
   private cpsEditor: monaco.editor.IStandaloneCodeEditor
+  private tokenizer: FinkTokenizer
   private lookup: PosMap | null = null
   private syncingFromCps = false
   private syncingFromSrc = false
   private highlightDeco: monaco.editor.IEditorDecorationsCollection
   private srcHighlightDeco: monaco.editor.IEditorDecorationsCollection
+  onWillHighlightSrc: (() => void) | null = null
+  onActivate: (() => void) | null = null
   private pendingTokens: { tokens: LexToken[]; code: string } | null = null
+  private lastSemanticTokens: Uint32Array = new Uint32Array(0)
+  private cpsTokens: LexToken[] = []
+  private srcTokens: LexToken[] = []
 
   constructor(
     container: HTMLElement,
     private srcEditor: monaco.editor.IStandaloneCodeEditor,
   ) {
+    const langId = `fink-cps-${cpsPanelCount++}`
+    monaco.languages.register({ id: langId, extensions: [] })
+    this.tokenizer = new FinkTokenizer()
+    this.tokenizer.register(langId)
+
+    // Semantic tokens provider — returns the last tokens computed in update().
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this
+    monaco.languages.registerDocumentSemanticTokensProvider(langId, {
+      getLegend() { return { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS } },
+      provideDocumentSemanticTokens() {
+        return { data: self.lastSemanticTokens, resultId: undefined }
+      },
+      releaseDocumentSemanticTokens() {},
+    })
+
     this.cpsEditor = monaco.editor.create(container, {
       value: '',
-      language: 'fink-cps',
+      language: langId,
       theme: 'fink-dark',
       readOnly: true,
       fontSize: 14,
@@ -134,7 +167,6 @@ export class CpsPanel {
       lineNumbers: 'on',
       accessibilitySupport: 'off',
       automaticLayout: true,
-      'semanticHighlighting.enabled': false,
     })
 
     this.highlightDeco = this.cpsEditor.createDecorationsCollection([])
@@ -146,19 +178,26 @@ export class CpsPanel {
     this.cpsEditor.getModel()!.onDidChangeContent(() => {
       if (!this.pendingTokens) return
       const model = this.cpsEditor.getModel()!
-      cpsTokenizer.update(this.pendingTokens.tokens, -1, this.pendingTokens.code)
+      this.tokenizer.update(this.pendingTokens.tokens, -1, this.pendingTokens.code)
       this.pendingTokens = null
     })
 
     // CPS cursor → highlight source
     this.cpsEditor.onDidChangeCursorPosition(e => {
       if (this.syncingFromSrc) return
+      this.onActivate?.()
       if (!this.lookup) return
-      const m = lookupCpsToSrc(this.lookup, e.position.lineNumber - 1, e.position.column - 1)
-      if (!m) return
+      const cpsLine = e.position.lineNumber - 1
+      const cpsCol  = e.position.column - 1
+      const cpsTok  = tokenAtPos(this.cpsTokens, cpsLine, cpsCol)
+      const m = lookupCpsToSrc(this.lookup, cpsLine, cpsTok ? cpsTok.col : cpsCol)
+      if (!m) { this.srcHighlightDeco.set([]); return }
+      this.onWillHighlightSrc?.()
       this.syncingFromCps = true
+      const srcTok = tokenAtPos(this.srcTokens, m.srcLine, m.srcCol)
+      const srcEnd = srcTok ? srcTok.endCol : m.srcCol + 1
       this.srcHighlightDeco.set([{
-        range: new monaco.Range(m.srcLine + 1, m.srcCol + 1, m.srcLine + 1, m.srcCol + 2),
+        range: new monaco.Range(m.srcLine + 1, m.srcCol + 1, m.srcLine + 1, srcEnd + 1),
         options: { className: 'fink-token-highlight', isWholeLine: false },
       }])
       this.srcEditor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.srcLine + 1, column: m.srcCol + 1 })
@@ -169,13 +208,16 @@ export class CpsPanel {
   // Called from main.ts on source editor cursor change.
   syncFromSource(srcLine: number, srcCol: number): void {
     if (this.syncingFromCps) return
-    if (!this.lookup) { console.log('[cps] syncFromSource: no lookup'); return }
-    const m = lookupSrcToCps(this.lookup, srcLine, srcCol)
-    console.log('[cps] syncFromSource', srcLine, srcCol, '->', m)
-    if (!m) return
+    this.highlightDeco.set([])
+    if (!this.lookup) return
+    const srcTok = tokenAtPos(this.srcTokens, srcLine, srcCol)
+    const m = lookupSrcToCps(this.lookup, srcLine, srcTok ? srcTok.col : srcCol)
+    if (!m) { this.highlightDeco.set([]); return }
     this.syncingFromSrc = true
+    const cpsTok = tokenAtPos(this.cpsTokens, m.cpsLine, m.cpsCol)
+    const cpsEnd = cpsTok ? cpsTok.endCol : m.cpsCol + 1
     this.highlightDeco.set([{
-      range: new monaco.Range(m.cpsLine + 1, m.cpsCol + 1, m.cpsLine + 1, m.cpsCol + 2),
+      range: new monaco.Range(m.cpsLine + 1, m.cpsCol + 1, m.cpsLine + 1, cpsEnd + 1),
       options: { className: 'fink-token-highlight', isWholeLine: false },
     }])
     this.cpsEditor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.cpsLine + 1, column: m.cpsCol + 1 })
@@ -193,7 +235,7 @@ export class CpsPanel {
       const mapObj = JSON.parse(parsed.map) as { mappings: string }
       const mappings = decodeMappings(mapObj.mappings)
       this.lookup = buildLookup(mappings)
-      console.log('[cps] mappings decoded:', mappings.length, JSON.stringify(mappings.slice(0, 6)))
+
     } catch {
       this.lookup = null
     }
@@ -206,15 +248,35 @@ export class CpsPanel {
       if (ParsedDocument && code) {
         const cpsDoc = new ParsedDocument(code)
         const highlightJson = cpsDoc.get_highlight_tokens()
+        this.lastSemanticTokens = cpsDoc.get_semantic_tokens()
         cpsDoc.free()
-        this.pendingTokens = { tokens: JSON.parse(highlightJson), code }
+        const tokens: LexToken[] = JSON.parse(highlightJson)
+        this.cpsTokens = tokens
+        this.pendingTokens = { tokens, code }
       } else {
         this.pendingTokens = null
+        this.lastSemanticTokens = new Uint32Array(0)
+        this.cpsTokens = []
       }
       model.setValue(code)
     }
     this.highlightDeco.set([])
     this.srcHighlightDeco.set([])
+  }
+
+  clearSrcHighlight(): void {
+    this.srcHighlightDeco.set([])
+  }
+
+  clearAll(): void {
+    this.highlightDeco.set([])
+    this.srcHighlightDeco.set([])
+  }
+
+  // Called from main.ts after each reparse with the source highlight tokens,
+  // so the CPS→source highlight can span the full source token.
+  updateSrcTokens(tokens: LexToken[]): void {
+    this.srcTokens = tokens
   }
 
   // Show/hide — called when tab is activated/deactivated.

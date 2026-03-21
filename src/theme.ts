@@ -49,6 +49,7 @@ export function defineTheme(): void {
   monaco.editor.defineTheme('fink-dark', {
     base: 'vs-dark',
     inherit: true,
+    semanticHighlighting: true,
     rules: [
       // Semantic token types (from WASM provider)
       { token: 'function',               foreground: fn },

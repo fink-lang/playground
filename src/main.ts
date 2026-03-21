@@ -17,7 +17,20 @@
 }
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+// Contributions — each registers its commands/keybindings when imported.
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
+import 'monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations.js'   // move/duplicate/delete line
+import 'monaco-editor/esm/vs/editor/contrib/wordOperations/browser/wordOperations.js'     // word jump + select
+import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController.js'               // Cmd+F, Cmd+H, Cmd+D
+import 'monaco-editor/esm/vs/editor/contrib/multicursor/browser/multicursor.js'           // Cmd+D multi-select
+import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js'                   // code folding
+import 'monaco-editor/esm/vs/editor/contrib/comment/browser/comment.js'                   // Cmd+/ toggle comment
+import 'monaco-editor/esm/vs/editor/contrib/indentation/browser/indentation.js'           // re-indent commands
+import 'monaco-editor/esm/vs/editor/contrib/smartSelect/browser/smartSelect.js'           // expand/shrink selection
+import 'monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching.js'   // bracket highlight + jump
+import 'monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/highlightDecorations.js' // highlight word occurrences
+import 'monaco-editor/esm/vs/editor/contrib/caretOperations/browser/caretOperations.js'   // transpose chars
+import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'             // cursor stack undo
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
@@ -216,6 +229,17 @@ const editor = monaco.editor.create(editorEl, {
   detectIndentation: false,
   automaticLayout: true,
 })
+
+// Explicitly bind Alt+Up/Down (move line) and Alt+Left/Right (word jump)
+// so macOS/browser doesn't intercept them before Monaco sees them.
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+  () => editor.trigger('keyboard', 'editor.action.moveLinesUpAction', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+  () => editor.trigger('keyboard', 'editor.action.moveLinesDownAction', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow,
+  () => editor.trigger('keyboard', 'cursorWordStartLeft', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow,
+  () => editor.trigger('keyboard', 'cursorWordEndRight', null))
 
 // Reparse synchronously on every content change so the tokenizer cache is
 // updated before Monaco asks for syntactic tokens on the next frame.

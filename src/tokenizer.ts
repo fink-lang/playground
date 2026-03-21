@@ -68,13 +68,16 @@ export function kindToScope(kind: string, src: string): string | null {
 // Each entry is a sorted array of {startIndex, scopes} ready for Monaco.
 type LineTokens = Array<{ startIndex: number; scopes: string }>
 
+
 export class FinkTokenizer {
   private cache: LineTokens[] = []
   private cacheVersion = -1
 
   // Call this whenever ParsedDocument changes (after every re-parse).
-  update(tokens: LexToken[], modelVersion: number): void {
-    if (modelVersion === this.cacheVersion) return
+  // The Rust lexer emits UTF-16 col values directly; no conversion needed.
+  // Pass modelVersion=-1 to force update unconditionally (e.g. for CPS editor).
+  update(tokens: LexToken[], modelVersion: number, _src: string): void {
+    if (modelVersion !== -1 && modelVersion === this.cacheVersion) return
     this.cacheVersion = modelVersion
 
     const byLine: Map<number, LineTokens> = new Map()
@@ -109,8 +112,8 @@ export class FinkTokenizer {
     }
   }
 
-  // Register this tokenizer with Monaco for the 'fink' language.
-  register(): void {
+  // Register this tokenizer with Monaco for the given language ID (default: 'fink').
+  register(langId = 'fink'): void {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this
 
@@ -128,7 +131,7 @@ export class FinkTokenizer {
       },
     })
 
-    monaco.languages.setTokensProvider('fink', {
+    monaco.languages.setTokensProvider(langId, {
       getInitialState: () => makeState(0, self.cacheVersion),
       tokenize(_lineText: string, state: State) {
         const lineTokens = self.cache[state.line] ?? []

@@ -8,7 +8,7 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-fink = { git = "https://github.com/fink-lang/fink.git", branch = "main" }
+fink = { git = "https://github.com/fink-lang/fink.git", branch = "main", default-features = false }
 wasm-bindgen = "0.2"
 
 [profile.release]

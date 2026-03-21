@@ -163,6 +163,13 @@
     white-space: nowrap;
   }
 
+  /* --- CPS panels --- */
+
+  #fink-cps,
+  #fink-cps-lifted {
+    overflow: hidden; /* Monaco manages its own scroll */
+  }
+
   /* --- Output panel --- */
 
   #fink-output {
@@ -190,10 +197,14 @@
     <div class="fink-playground-right-pane">
       <div class="fink-playground-tabs">
         <button class="fink-tab active" data-tab="fink-tokens">Tokens</button>
+        <button class="fink-tab" data-tab="fink-cps">CPS</button>
+        <button class="fink-tab" data-tab="fink-cps-lifted">Lifted</button>
         <button class="fink-tab" data-tab="fink-output">Output</button>
       </div>
       <div class="fink-tab-content">
         <div id="fink-tokens" class="fink-tab-panel active"></div>
+        <div id="fink-cps" class="fink-tab-panel"></div>
+        <div id="fink-cps-lifted" class="fink-tab-panel"></div>
         <pre id="fink-output" class="fink-tab-panel">Click ▶ Run to execute.</pre>
       </div>
     </div>

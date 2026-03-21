@@ -88,13 +88,9 @@ export class TokensPanel {
         )
         this.decorations.set([{
           range,
-          options: {
-            className: 'fink-token-highlight',
-            isWholeLine: false,
-          },
+          options: { className: 'fink-token-highlight', isWholeLine: false },
         }])
         this.editor.revealRangeInCenter(range)
-        this.editor.focus()
       })
 
       frag.appendChild(pill)
@@ -109,6 +105,10 @@ export class TokensPanel {
     if (pos) {
       this.highlightAtPosition(pos.lineNumber - 1, pos.column - 1)
     }
+  }
+
+  clearEditorHighlight(): void {
+    this.decorations.set([])
   }
 
   highlightAtPosition(line: number, col: number): void {
@@ -141,6 +141,10 @@ export class TokensPanel {
           parent.scrollTop += pad - (parentRect.bottom - pillRect.bottom)
         }
         this.activePill = pill
+        this.decorations.set([{
+          range: new monaco.Range(tok.line + 1, tok.col + 1, tok.endLine + 1, tok.endCol + 1),
+          options: { className: 'fink-token-highlight', isWholeLine: false },
+        }])
         return
       }
       pillIdx++

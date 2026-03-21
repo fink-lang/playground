@@ -77,7 +77,7 @@ export class AstPanel {
     this.decorations = editor.createDecorationsCollection()
   }
 
-  update(astJson: string): void {
+  update(astJson: string, diagnosticsJson: string): void {
     this.activeEl = null
     this.nodeMap.clear()
 
@@ -86,9 +86,15 @@ export class AstPanel {
     this.container.innerHTML = ''
 
     if (!root) {
+      const diags: Array<{ message: string, source: string }> = JSON.parse(diagnosticsJson)
+      const errors = diags.filter(d => (d as any).severity === 'error')
       const msg = document.createElement('div')
       msg.className = 'fink-ast-empty'
-      msg.textContent = '(parse error — no AST)'
+      if (errors.length > 0) {
+        msg.textContent = errors.map(e => `${e.source}: ${e.message}`).join('\n')
+      } else {
+        msg.textContent = '(parse error — no AST)'
+      }
       this.container.appendChild(msg)
       this.flat = []
       return

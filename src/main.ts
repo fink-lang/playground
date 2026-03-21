@@ -31,6 +31,7 @@ import 'monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatch
 import 'monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/highlightDecorations.js' // highlight word occurrences
 import 'monaco-editor/esm/vs/editor/contrib/caretOperations/browser/caretOperations.js'   // transpose chars
 import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'             // cursor stack undo
+import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'           // hover tooltips (diagnostics, symbols)
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
@@ -56,9 +57,34 @@ const wasmReady = new Promise<void>(resolve => { resolveWasmReady = resolve })
 // so the tokenizer cache is always up-to-date before Monaco asks for tokens.
 let lastSemanticTokens: Uint32Array = new Uint32Array(0)
 let lastDiagnostics: string = '[]'
+let lastParseMs = 0
 
-function reparse(src: string, modelVersion: number): void {
+// Forward declaration — defined after the editor is created (needs DOM + editor).
+let applyDiagnosticToggles: () => void = () => {}
+
+let lastReparsedHash = ''
+
+function srcHash(src: string): string {
+  let h = 5381
+  for (let i = 0; i < src.length; i++) h = (h * 33 ^ src.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}
+
+function reparse(src: string, _modelVersion: number): void {
   if (!ParsedDocument) return
+  const hash = srcHash(src)
+  if (hash === lastReparsedHash) return
+  lastReparsedHash = hash
+  try {
+    _reparse(src, _modelVersion)
+  } catch (e) {
+    console.error('[fink] reparse crashed:', e)
+    // Reset hash so the next edit retries
+    lastReparsedHash = ''
+  }
+}
+
+function _reparse(src: string, _modelVersion: number): void {
   const t0 = performance.now()
   const doc = new ParsedDocument(src)
   const t1 = performance.now()
@@ -72,15 +98,17 @@ function reparse(src: string, modelVersion: number): void {
   doc.free()
   const t2 = performance.now()
   const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
-  tokenizer.update(highlightTokens, modelVersion, src)
+  tokenizer.update(highlightTokens, _modelVersion, src)
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
-  astPanel?.update(astJson)
+  astPanel?.update(astJson, lastDiagnostics)
   cpsPanel?.update(cpsJson, ParsedDocument)
   cpsPanel?.updateSrcTokens(highlightTokens)
   cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
   cpsPanelLifted?.updateSrcTokens(highlightTokens)
   const t3 = performance.now()
+  lastParseMs = t1 - t0
+  statusParseEl?.updateTime(lastParseMs)
   console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
 }
 
@@ -175,24 +203,10 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
   },
   async provideDocumentSemanticTokens(model) {
     await wasmReady
-    reparse(model.getValue(), model.getVersionId())
-    const parsed = JSON.parse(lastDiagnostics) as Array<{
-      line: number, col: number, endLine: number, endCol: number,
-      message: string, source: string, severity: string
-    }>
-    monaco.editor.setModelMarkers(model, 'fink', parsed.map(d => ({
-      startLineNumber: d.line + 1,
-      startColumn: d.col + 1,
-      endLineNumber: d.endLine + 1,
-      endColumn: Math.max(d.endCol + 1, d.col + 2),
-      message: d.message,
-      severity: d.severity === 'error'
-        ? monaco.MarkerSeverity.Error
-        : d.severity === 'warning'
-          ? monaco.MarkerSeverity.Warning
-          : monaco.MarkerSeverity.Info,
-      source: d.source,
-    })))
+    const src = model.getValue()
+    reparse(src, model.getVersionId())
+    if (src.trim()) applyDiagnosticToggles()
+    else monaco.editor.setModelMarkers(model, 'fink', [])
     return { data: lastSemanticTokens, resultId: undefined }
   },
   releaseDocumentSemanticTokens() {},
@@ -240,6 +254,71 @@ editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow,
   () => editor.trigger('keyboard', 'cursorWordStartLeft', null))
 editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow,
   () => editor.trigger('keyboard', 'cursorWordEndRight', null))
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+const statusPosEl = document.getElementById('fink-status-pos')!
+const statusParseEl = {
+  el: document.getElementById('fink-status-parse')!,
+  updateTime(ms: number) { this.el.textContent = `parse ${ms.toFixed(1)}ms` },
+}
+
+editor.onDidChangeCursorPosition(e => {
+  statusPosEl.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`
+})
+
+// Diagnostic toggle state
+let showErrors = true
+let showWarnings = true
+
+const errBtn = document.getElementById('fink-toggle-errors') as HTMLButtonElement
+const warnBtn = document.getElementById('fink-toggle-warnings') as HTMLButtonElement
+
+applyDiagnosticToggles = function(): void {
+  const model = editor.getModel()
+  if (!model) return
+  const all = JSON.parse(lastDiagnostics) as Array<{
+    line: number, col: number, endLine: number, endCol: number,
+    message: string, source: string, severity: string
+  }>
+  const filtered = all.filter(d =>
+    (d.severity === 'error' && showErrors) ||
+    (d.severity === 'warning' && showWarnings) ||
+    (d.severity !== 'error' && d.severity !== 'warning')
+  )
+  monaco.editor.setModelMarkers(model, 'fink', filtered.map(d => ({
+    startLineNumber: d.line + 1,
+    startColumn: d.col + 1,
+    endLineNumber: d.endLine + 1,
+    endColumn: Math.max(d.endCol + 1, d.col + 2),
+    message: d.message,
+    severity: d.severity === 'error'
+      ? monaco.MarkerSeverity.Error
+      : d.severity === 'warning'
+        ? monaco.MarkerSeverity.Warning
+        : monaco.MarkerSeverity.Info,
+    source: d.source,
+  })))
+
+  // Update button counts
+  const errorCount = all.filter(d => d.severity === 'error').length
+  const warnCount  = all.filter(d => d.severity === 'warning').length
+  errBtn.textContent  = `${errorCount} Error${errorCount !== 1 ? 's' : ''}`
+  warnBtn.textContent = `${warnCount} Warning${warnCount !== 1 ? 's' : ''}`
+  errBtn.classList.toggle('active', showErrors)
+  warnBtn.classList.toggle('active', showWarnings)
+}
+
+errBtn.addEventListener('click', () => {
+  showErrors = !showErrors
+  applyDiagnosticToggles()
+})
+warnBtn.addEventListener('click', () => {
+  showWarnings = !showWarnings
+  applyDiagnosticToggles()
+})
 
 // Reparse synchronously on every content change so the tokenizer cache is
 // updated before Monaco asks for syntactic tokens on the next frame.

@@ -86,11 +86,8 @@ export class TokensPanel {
           tok.line + 1, tok.col + 1,
           tok.endLine + 1, tok.endCol + 1,
         )
-        this.decorations.set([{
-          range,
-          options: { className: 'fink-token-highlight', isWholeLine: false },
-        }])
         this.editor.revealRangeInCenter(range)
+        this.editor.setPosition({ lineNumber: tok.line + 1, column: tok.col + 1 })
       })
 
       frag.appendChild(pill)

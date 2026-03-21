@@ -229,6 +229,19 @@ editor.onDidChangeModelContent(() => {
 // Right pane — tabbed panel (Tokens, Output, …)
 // ---------------------------------------------------------------------------
 
+// Tabs that participate in bidirectional cursor sync.
+const SYNC_TABS = new Set(['fink-tokens', 'fink-ast', 'fink-cps', 'fink-cps-lifted'])
+
+// Currently active tab id — used to gate cursor sync.
+let activeTab = 'fink-run-panel'
+
+function clearAllDecorations(): void {
+  tokensPanel?.clearEditorHighlight()
+  astPanel?.clearEditorHighlight()
+  cpsPanel?.clearAll()
+  cpsPanelLifted?.clearAll()
+}
+
 // Tab switching
 for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
   tab.addEventListener('click', () => {
@@ -236,10 +249,13 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     document.querySelector('.fink-tab-panel.active')?.classList.remove('active')
     tab.classList.add('active')
     document.getElementById(tab.dataset.tab!)?.classList.add('active')
-    if (tab.dataset.tab === 'fink-cps') cpsPanel?.layout()
-    if (tab.dataset.tab === 'fink-cps-lifted') cpsPanelLifted?.layout()
-    // Clear AST highlight when switching away from AST tab
-    if (tab.dataset.tab !== 'fink-ast') astPanel?.clearEditorHighlight()
+    activeTab = tab.dataset.tab!
+    if (activeTab === 'fink-cps') cpsPanel?.layout()
+    if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.layout()
+    if (!SYNC_TABS.has(activeTab)) {
+      // Passive tab (e.g. Output) — clear all decorations and stop syncing.
+      clearAllDecorations()
+    }
   })
 }
 
@@ -275,28 +291,26 @@ cpsPanel.onWillHighlightSrc = () => cpsPanelLifted?.clearSrcHighlight()
 cpsPanelLifted.onWillHighlightSrc = () => cpsPanel?.clearSrcHighlight()
 
 editor.onDidFocusEditorText(() => {
-  tokensPanel.clearEditorHighlight()
-  astPanel?.clearEditorHighlight()
-  cpsPanel?.clearAll()
-  cpsPanelLifted?.clearAll()
-  cpsPanelLifted?.clearSrcHighlight()
+  if (!SYNC_TABS.has(activeTab)) return
+  clearAllDecorations()
   const pos = editor.getPosition()!
-  astPanel?.highlightAtPosition(pos.lineNumber - 1, pos.column - 1)
-  cpsPanel?.syncFromSource(pos.lineNumber - 1, pos.column - 1)
-  cpsPanelLifted?.syncFromSource(pos.lineNumber - 1, pos.column - 1)
+  const line = pos.lineNumber - 1
+  const col = pos.column - 1
+  if (activeTab === 'fink-tokens') tokensPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
+  if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
 })
 
 editor.onDidChangeCursorPosition(e => {
-  tokensPanel.clearEditorHighlight()
-  astPanel?.clearEditorHighlight()
-  cpsPanel?.clearSrcHighlight()
-  cpsPanelLifted?.clearSrcHighlight()
+  if (!SYNC_TABS.has(activeTab)) return
+  clearAllDecorations()
   const line = e.position.lineNumber - 1
   const col = e.position.column - 1
-  tokensPanel.highlightAtPosition(line, col)
-  astPanel?.highlightAtPosition(line, col)
-  cpsPanel?.syncFromSource(line, col)
-  cpsPanelLifted?.syncFromSource(line, col)
+  if (activeTab === 'fink-tokens') tokensPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
+  if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
 })
 
 // ---------------------------------------------------------------------------

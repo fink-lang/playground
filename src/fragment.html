@@ -13,43 +13,6 @@
     color: var(--fink-editor-fg, #cccccc);
   }
 
-  .fink-playground-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 12px;
-    height: 36px;
-    background: var(--fink-editor-surface, #252526);
-    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
-    flex-shrink: 0;
-  }
-
-  .fink-playground-spacer { flex: 1; }
-
-  .fink-playground-btn {
-    padding: 3px 12px;
-    border: none;
-    border-radius: 3px;
-    font-size: 12px;
-    font-family: inherit;
-    cursor: pointer;
-  }
-  .fink-playground-btn:disabled { opacity: 0.5; cursor: default; }
-
-  #fink-run-btn {
-    background: var(--fink-editor-btn-bg, #0e639c);
-    color: #fff;
-  }
-  #fink-run-btn:hover:not(:disabled) { background: var(--fink-editor-btn-hover, #1177bb); }
-
-  #fink-share-btn {
-    background: var(--fink-editor-surface, #252526);
-    color: var(--fink-editor-fg, #cccccc);
-    border: 1px solid var(--fink-editor-border, #3e3e42);
-  }
-  #fink-share-btn:hover:not(:disabled) { color: #fff; border-color: var(--fink-editor-fg-dim, #858585); }
-  #fink-share-btn.copied { color: var(--fink-editor-ok, #4ec9b0); border-color: var(--fink-editor-ok, #4ec9b0); }
-
   .fink-playground-workspace {
     display: flex;
     flex: 1;
@@ -71,12 +34,17 @@
     background: var(--fink-editor-bg, #1e1e1e);
   }
 
+  /* --- Tab bar (with Share button on the far right) --- */
+
   .fink-playground-tabs {
     display: flex;
+    align-items: stretch;
     gap: 0;
     border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
     flex-shrink: 0;
   }
+
+  .fink-playground-tabs-spacer { flex: 1; }
 
   .fink-tab {
     padding: 6px 14px;
@@ -96,6 +64,23 @@
     border-bottom-color: var(--fink-editor-fg-dim, #858585);
   }
 
+  #fink-share-btn {
+    margin: 5px 8px;
+    padding: 2px 10px;
+    border: 1px solid var(--fink-editor-border, #3e3e42);
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    background: none;
+    color: var(--fink-editor-fg-dim, #858585);
+    align-self: center;
+  }
+  #fink-share-btn:hover { color: var(--fink-editor-fg, #ccc); border-color: var(--fink-editor-fg-dim, #858585); }
+  #fink-share-btn.copied { color: var(--fink-editor-ok, #4ec9b0); border-color: var(--fink-editor-ok, #4ec9b0); }
+
+  /* --- Tab content area --- */
+
   .fink-tab-content {
     flex: 1;
     min-height: 0;
@@ -109,6 +94,9 @@
     inset: 0;
   }
   .fink-tab-panel.active { display: block; }
+  /* Run panel is a flex column — override the block display only when active */
+  #fink-run-panel { display: none; }
+  #fink-run-panel.active { display: flex; overflow: hidden; }
 
   /* --- Token highlight decoration in editor --- */
 
@@ -144,8 +132,8 @@
   }
   .fink-token-pill.fink-token-active {
     background: rgba(255, 255, 255, 0.08);
-    border-width: 2px;
     border-color: var(--fink-editor-fg-dim, #858585);
+    outline: 1px solid var(--fink-editor-fg-dim, #858585);
   }
 
   .fink-token-kind {
@@ -241,7 +229,33 @@
     overflow: hidden; /* Monaco manages its own scroll */
   }
 
-  /* --- Output panel --- */
+  /* --- Run panel --- */
+
+  #fink-run-panel {
+    flex-direction: column;
+  }
+
+  .fink-run-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--fink-editor-border, #3e3e42);
+    flex-shrink: 0;
+  }
+
+  #fink-run-btn {
+    padding: 3px 14px;
+    border: none;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    background: var(--fink-editor-btn-bg, #0e639c);
+    color: #fff;
+  }
+  #fink-run-btn:hover:not(:disabled) { background: var(--fink-editor-btn-hover, #1177bb); }
+  #fink-run-btn:disabled { opacity: 0.5; cursor: default; }
 
   #fink-output {
     padding: 12px 14px;
@@ -250,6 +264,9 @@
     line-height: 1.5;
     white-space: pre-wrap;
     color: var(--fink-editor-fg, #cccccc);
+    margin: 0;
+    flex: 1;
+    overflow-y: auto;
   }
   #fink-output.running { color: var(--fink-editor-fg-dim, #858585); }
   #fink-output.ok      { color: var(--fink-editor-ok,  #4ec9b0); }
@@ -257,28 +274,29 @@
 </style>
 
 <div class="fink-playground">
-  <div class="fink-playground-toolbar">
-    <span class="fink-playground-spacer"></span>
-    <button id="fink-share-btn" class="fink-playground-btn">Share</button>
-    <button id="fink-run-btn"   class="fink-playground-btn">&#9654; Run</button>
-  </div>
-
   <div class="fink-playground-workspace">
     <div id="fink-editor"></div>
     <div class="fink-playground-right-pane">
       <div class="fink-playground-tabs">
-        <button class="fink-tab active" data-tab="fink-tokens">Tokens</button>
+        <button class="fink-tab active" data-tab="fink-run-panel">Run</button>
+        <button class="fink-tab" data-tab="fink-tokens">Tokens</button>
         <button class="fink-tab" data-tab="fink-ast">AST</button>
         <button class="fink-tab" data-tab="fink-cps">CPS</button>
         <button class="fink-tab" data-tab="fink-cps-lifted">Lifted</button>
-        <button class="fink-tab" data-tab="fink-output">Output</button>
+        <span class="fink-playground-tabs-spacer"></span>
+        <button id="fink-share-btn">Share</button>
       </div>
       <div class="fink-tab-content">
-        <div id="fink-tokens" class="fink-tab-panel active"></div>
+        <div id="fink-run-panel" class="fink-tab-panel active">
+          <div class="fink-run-toolbar">
+            <button id="fink-run-btn">&#9654; Run</button>
+          </div>
+          <pre id="fink-output">Click ▶ Run to execute.</pre>
+        </div>
+        <div id="fink-tokens" class="fink-tab-panel"></div>
         <div id="fink-ast" class="fink-tab-panel"></div>
         <div id="fink-cps" class="fink-tab-panel"></div>
         <div id="fink-cps-lifted" class="fink-tab-panel"></div>
-        <pre id="fink-output" class="fink-tab-panel">Click ▶ Run to execute.</pre>
       </div>
     </div>
   </div>

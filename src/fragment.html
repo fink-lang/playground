@@ -163,6 +163,77 @@
     white-space: nowrap;
   }
 
+  /* --- AST panel --- */
+
+  #fink-ast {
+    padding: 6px 0;
+  }
+
+  .fink-ast-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+    padding-right: 10px;
+    cursor: pointer;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .fink-ast-row:hover {
+    background: var(--fink-editor-surface, #252526);
+  }
+  .fink-ast-row.fink-ast-active {
+    background: rgba(255, 255, 255, 0.07);
+    outline: 1px solid rgba(255, 255, 255, 0.15);
+    outline-offset: -1px;
+  }
+
+  .fink-ast-chevron {
+    flex-shrink: 0;
+    width: 10px;
+    font-size: 8px;
+    color: var(--fink-editor-fg-dim, #858585);
+    user-select: none;
+    line-height: 1;
+    /* vertical alignment tweak for the small triangle glyphs */
+    position: relative;
+    top: -1px;
+  }
+  .fink-ast-chevron:hover {
+    color: var(--fink-editor-fg, #ccc);
+  }
+
+  .fink-ast-kind {
+    font-size: 12px;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+
+  .fink-ast-label {
+    font-size: 10px;
+    font-family: "Hack", "Consolas", "Menlo", monospace;
+    opacity: 0.55;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .fink-ast-loc {
+    font-size: 10px;
+    font-family: "Hack", "Consolas", "Menlo", monospace;
+    opacity: 0.3;
+    margin-left: auto;
+    padding-left: 12px;
+    flex-shrink: 0;
+  }
+
+  .fink-ast-empty {
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--fink-editor-fg-dim, #858585);
+    font-style: italic;
+  }
+
   /* --- CPS panels --- */
 
   #fink-cps,
@@ -197,12 +268,14 @@
     <div class="fink-playground-right-pane">
       <div class="fink-playground-tabs">
         <button class="fink-tab active" data-tab="fink-tokens">Tokens</button>
+        <button class="fink-tab" data-tab="fink-ast">AST</button>
         <button class="fink-tab" data-tab="fink-cps">CPS</button>
         <button class="fink-tab" data-tab="fink-cps-lifted">Lifted</button>
         <button class="fink-tab" data-tab="fink-output">Output</button>
       </div>
       <div class="fink-tab-content">
         <div id="fink-tokens" class="fink-tab-panel active"></div>
+        <div id="fink-ast" class="fink-tab-panel"></div>
         <div id="fink-cps" class="fink-tab-panel"></div>
         <div id="fink-cps-lifted" class="fink-tab-panel"></div>
         <pre id="fink-output" class="fink-tab-panel">Click ▶ Run to execute.</pre>

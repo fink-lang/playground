@@ -22,6 +22,7 @@ import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
+import { AstPanel } from './ast-panel.js'
 import { CpsPanel } from './cps-panel.js'
 import { defineTheme } from './theme.js'
 
@@ -52,6 +53,7 @@ function reparse(src: string, modelVersion: number): void {
   lastDiagnostics = doc.get_diagnostics()
   const rawTokensJson = doc.get_tokens()
   const highlightTokensJson = doc.get_highlight_tokens()
+  const astJson = doc.get_ast()
   const cpsJson = doc.get_cps()
   const cpsLiftedJson = doc.get_cps_lifted()
   doc.free()
@@ -60,6 +62,7 @@ function reparse(src: string, modelVersion: number): void {
   tokenizer.update(highlightTokens, modelVersion, src)
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
+  astPanel?.update(astJson)
   cpsPanel?.update(cpsJson, ParsedDocument)
   cpsPanel?.updateSrcTokens(highlightTokens)
   cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
@@ -102,6 +105,8 @@ tokenizer.register()
 
 // Tokens panel — initialized after the editor is created (see below).
 let tokensPanel: TokensPanel | null = null
+// AST panel — initialized after the editor is created (see below).
+let astPanel: AstPanel | null = null
 // CPS panels — initialized after the editor is created (see below).
 let cpsPanel: CpsPanel | null = null
 let cpsPanelLifted: CpsPanel | null = null
@@ -233,12 +238,20 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     document.getElementById(tab.dataset.tab!)?.classList.add('active')
     if (tab.dataset.tab === 'fink-cps') cpsPanel?.layout()
     if (tab.dataset.tab === 'fink-cps-lifted') cpsPanelLifted?.layout()
+    // Clear AST highlight when switching away from AST tab
+    if (tab.dataset.tab !== 'fink-ast') astPanel?.clearEditorHighlight()
   })
 }
 
 // Tokens panel — pill view with bidirectional cursor sync
 tokensPanel = new TokensPanel(
   document.getElementById('fink-tokens')!,
+  editor,
+)
+
+// AST panel — indented tree with bidirectional cursor sync
+astPanel = new AstPanel(
+  document.getElementById('fink-ast')!,
   editor,
 )
 
@@ -263,35 +276,27 @@ cpsPanelLifted.onWillHighlightSrc = () => cpsPanel?.clearSrcHighlight()
 
 editor.onDidFocusEditorText(() => {
   tokensPanel.clearEditorHighlight()
+  astPanel?.clearEditorHighlight()
   cpsPanel?.clearAll()
   cpsPanelLifted?.clearAll()
   cpsPanelLifted?.clearSrcHighlight()
-  cpsPanel?.syncFromSource(
-    editor.getPosition()!.lineNumber - 1,
-    editor.getPosition()!.column - 1,
-  )
-  cpsPanelLifted?.syncFromSource(
-    editor.getPosition()!.lineNumber - 1,
-    editor.getPosition()!.column - 1,
-  )
+  const pos = editor.getPosition()!
+  astPanel?.highlightAtPosition(pos.lineNumber - 1, pos.column - 1)
+  cpsPanel?.syncFromSource(pos.lineNumber - 1, pos.column - 1)
+  cpsPanelLifted?.syncFromSource(pos.lineNumber - 1, pos.column - 1)
 })
 
 editor.onDidChangeCursorPosition(e => {
   tokensPanel.clearEditorHighlight()
+  astPanel?.clearEditorHighlight()
   cpsPanel?.clearSrcHighlight()
   cpsPanelLifted?.clearSrcHighlight()
-  tokensPanel.highlightAtPosition(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
-  cpsPanel?.syncFromSource(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
-  cpsPanelLifted?.syncFromSource(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
+  const line = e.position.lineNumber - 1
+  const col = e.position.column - 1
+  tokensPanel.highlightAtPosition(line, col)
+  astPanel?.highlightAtPosition(line, col)
+  cpsPanel?.syncFromSource(line, col)
+  cpsPanelLifted?.syncFromSource(line, col)
 })
 
 // ---------------------------------------------------------------------------

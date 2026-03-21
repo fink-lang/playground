@@ -534,6 +534,137 @@ struct IdentEntry {
     cps_idx: u32,
 }
 
+// ---------------------------------------------------------------------------
+// AST serialization
+// ---------------------------------------------------------------------------
+
+/// Serialize a single AST node (and its subtree) to a JSON object string.
+/// Format: {id, kind, label, line, col, endLine, endCol, children:[...]}
+/// line/col are 0-based (loc.start.line is 1-based in the AST, so we subtract 1).
+fn serialize_node(node: &ast::Node) -> String {
+    let id = node.id.0;
+    let line = node.loc.start.line.saturating_sub(1);
+    let col = node.loc.start.col;
+    let end_line = node.loc.end.line.saturating_sub(1);
+    let end_col = node.loc.end.col;
+
+    let (kind, label) = node_kind_label(node);
+    let label_escaped = label
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+
+    let children = serialize_children(node);
+    format!(
+        r#"{{"id":{id},"kind":"{kind}","label":"{label_escaped}","line":{line},"col":{col},"endLine":{end_line},"endCol":{end_col},"children":[{children}]}}"#
+    )
+}
+
+/// Returns `(kind_str, label_str)` for a node — the discriminant name and a
+/// concise inline annotation (op token, literal value, identifier name, etc.).
+fn node_kind_label<'a>(node: &'a ast::Node<'a>) -> (&'static str, String) {
+    use ast::NodeKind::*;
+    match &node.kind {
+        LitBool(v)      => ("LitBool",    if *v { "true".into() } else { "false".into() }),
+        LitInt(s)       => ("LitInt",     s.to_string()),
+        LitFloat(s)     => ("LitFloat",   s.to_string()),
+        LitDecimal(s)   => ("LitDecimal", s.to_string()),
+        LitStr { content, .. } => {
+            let preview: String = content.chars().take(20).collect();
+            let suffix = if content.len() > 20 { "…" } else { "" };
+            ("LitStr", format!("'{preview}{suffix}'"))
+        }
+        LitSeq { open, close, .. } => ("LitSeq", format!("{}…{}", open.src, close.src)),
+        LitRec { open, close, .. } => ("LitRec", format!("{}…{}", open.src, close.src)),
+        StrTempl { .. }    => ("StrTempl",    String::new()),
+        StrRawTempl { .. } => ("StrRawTempl", String::new()),
+        Ident(s)           => ("Ident",       s.to_string()),
+        UnaryOp { op, .. } => ("UnaryOp",     op.src.to_string()),
+        InfixOp { op, .. } => ("InfixOp",     op.src.to_string()),
+        ChainedCmp(_)      => ("ChainedCmp",  String::new()),
+        Spread { op, .. }  => ("Spread",      op.src.to_string()),
+        Member { op, .. }  => ("Member",      op.src.to_string()),
+        Group { .. }       => ("Group",       String::new()),
+        Partial            => ("Partial",     String::new()),
+        Wildcard           => ("Wildcard",    String::new()),
+        Bind { op, .. }    => ("Bind",        op.src.to_string()),
+        BindRight { op, .. } => ("BindRight", op.src.to_string()),
+        Apply { .. }       => ("Apply",       String::new()),
+        Pipe(_)            => ("Pipe",        String::new()),
+        Fn { sep, .. }     => ("Fn",          sep.src.to_string()),
+        Patterns(_)        => ("Patterns",    String::new()),
+        Match { sep, .. }  => ("Match",       sep.src.to_string()),
+        Arm { sep, .. }    => ("Arm",         sep.src.to_string()),
+        Try(_)             => ("Try",         String::new()),
+        Yield(_)           => ("Yield",       String::new()),
+        Block { sep, .. }  => ("Block",       sep.src.to_string()),
+    }
+}
+
+/// Serialize the direct children of a node as a comma-joined JSON array body.
+fn serialize_children(node: &ast::Node) -> String {
+    use ast::{CmpPart, NodeKind::*};
+    let mut parts: Vec<String> = Vec::new();
+
+    match &node.kind {
+        LitBool(_) | LitInt(_) | LitFloat(_) | LitDecimal(_) | LitStr { .. }
+        | Ident(_) | Partial | Wildcard => {}
+
+        LitSeq { items, .. } | LitRec { items, .. } | Pipe(items) | Patterns(items) => {
+            for child in &items.items { parts.push(serialize_node(child)); }
+        }
+        StrTempl { children, .. } | StrRawTempl { children, .. } => {
+            for child in children { parts.push(serialize_node(child)); }
+        }
+        UnaryOp { operand, .. } | Try(operand) | Yield(operand) => {
+            parts.push(serialize_node(operand));
+        }
+        InfixOp { lhs, rhs, .. }
+        | Bind { lhs, rhs, .. }
+        | BindRight { lhs, rhs, .. }
+        | Member { lhs, rhs, .. } => {
+            parts.push(serialize_node(lhs));
+            parts.push(serialize_node(rhs));
+        }
+        ChainedCmp(cmp_parts) => {
+            for p in cmp_parts {
+                if let CmpPart::Operand(n) = p { parts.push(serialize_node(n)); }
+            }
+        }
+        Spread { inner, .. } => {
+            if let Some(n) = inner { parts.push(serialize_node(n)); }
+        }
+        Group { inner, .. } => { parts.push(serialize_node(inner)); }
+        Apply { func, args } => {
+            parts.push(serialize_node(func));
+            for arg in &args.items { parts.push(serialize_node(arg)); }
+        }
+        Fn { params, body, .. } => {
+            parts.push(serialize_node(params));
+            for stmt in &body.items { parts.push(serialize_node(stmt)); }
+        }
+        Match { subjects, arms, .. } => {
+            parts.push(serialize_node(subjects));
+            for arm in &arms.items { parts.push(serialize_node(arm)); }
+        }
+        Arm { lhs, body, .. } => {
+            for pat in &lhs.items { parts.push(serialize_node(pat)); }
+            for stmt in &body.items { parts.push(serialize_node(stmt)); }
+        }
+        Block { name, params, body, .. } => {
+            parts.push(serialize_node(name));
+            parts.push(serialize_node(params));
+            for stmt in &body.items { parts.push(serialize_node(stmt)); }
+        }
+    }
+
+    parts.join(",")
+}
+
+// ---------------------------------------------------------------------------
+
 /// Stateful parsed document - parse once, query many times.
 /// Stores only owned data: no borrows, no lifetimes.
 #[wasm_bindgen]
@@ -848,6 +979,18 @@ impl ParsedDocument {
         }
 
         locs
+    }
+
+    /// Return the AST as a nested JSON tree.
+    /// Each node: {id, kind, label, line, col, endLine, endCol, children:[...]}.
+    /// line/col are 0-based, matching get_tokens().
+    /// Returns `null` if the source fails to parse.
+    pub fn get_ast(&self) -> String {
+        let r = match parser::parse(&self.src) {
+            Ok(r) => r,
+            Err(_) => return "null".to_string(),
+        };
+        serialize_node(&r.root)
     }
 
     /// Return CPS output as JSON: `{"code": "...", "map": "..."}`.

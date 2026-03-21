@@ -22,6 +22,8 @@ import fs from 'fs'
 import path from 'path'
 import { createRequire } from 'module'
 
+const prod = process.env.NODE_ENV === 'production'
+
 const require = createRequire(import.meta.url)
 const OUT = 'build'
 
@@ -63,7 +65,7 @@ await esbuild.build({
   loader: {
     '.ttf': 'file',
   },
-  minify: false, // keep readable during development
+  minify: prod,
 })
 console.log('  bundled playground.js')
 

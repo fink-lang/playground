@@ -40,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: node build.mjs
+        run: NODE_ENV=production node build.mjs
 
       - name: Package artifact
         run: tar -czf playground.tar.gz -C build .

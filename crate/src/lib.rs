@@ -364,13 +364,11 @@ fn collect_tokens<'src>(node: &'src Node<'src>, tokens: &mut Vec<RawToken>) {
         NodeKind::LitRec { items: children, .. } => {
             for child in &children.items {
                 if let NodeKind::Arm { lhs, body, .. } = &child.kind {
-                    if let Some(first_lhs) = lhs.items.first() {
-                        if matches!(&first_lhs.kind, NodeKind::Ident(_)) {
-                            if body.items.is_empty() {
-                                emit_token(tokens, first_lhs, TOKEN_VARIABLE, MOD_READONLY);
-                            } else {
-                                emit_token(tokens, first_lhs, TOKEN_PROPERTY, 0);
-                            }
+                    if matches!(&lhs.kind, NodeKind::Ident(_)) {
+                        if body.items.is_empty() {
+                            emit_token(tokens, lhs, TOKEN_VARIABLE, MOD_READONLY);
+                        } else {
+                            emit_token(tokens, lhs, TOKEN_PROPERTY, 0);
                         }
                     }
                     // Recurse into arm body
@@ -433,7 +431,9 @@ fn collect_tokens<'src>(node: &'src Node<'src>, tokens: &mut Vec<RawToken>) {
         }
 
         NodeKind::Match { subjects, arms, .. } => {
-            collect_tokens(subjects, tokens);
+            for subject in &subjects.items {
+                collect_tokens(subject, tokens);
+            }
             for arm in &arms.items {
                 collect_tokens(arm, tokens);
             }
@@ -441,9 +441,7 @@ fn collect_tokens<'src>(node: &'src Node<'src>, tokens: &mut Vec<RawToken>) {
 
         NodeKind::Arm { lhs, body, .. } => {
             // Arms not inside LitRec — just recurse
-            for expr in &lhs.items {
-                collect_tokens(expr, tokens);
-            }
+            collect_tokens(lhs, tokens);
             for expr in &body.items {
                 collect_tokens(expr, tokens);
             }
@@ -646,11 +644,11 @@ fn serialize_children(node: &ast::Node) -> String {
             for stmt in &body.items { parts.push(serialize_node(stmt)); }
         }
         Match { subjects, arms, .. } => {
-            parts.push(serialize_node(subjects));
+            for subject in &subjects.items { parts.push(serialize_node(subject)); }
             for arm in &arms.items { parts.push(serialize_node(arm)); }
         }
         Arm { lhs, body, .. } => {
-            for pat in &lhs.items { parts.push(serialize_node(pat)); }
+            parts.push(serialize_node(lhs));
             for stmt in &body.items { parts.push(serialize_node(stmt)); }
         }
         Block { name, params, body, .. } => {

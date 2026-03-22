@@ -17,11 +17,26 @@
 }
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+// Contributions — each registers its commands/keybindings when imported.
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
+import 'monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations.js'   // move/duplicate/delete line
+import 'monaco-editor/esm/vs/editor/contrib/wordOperations/browser/wordOperations.js'     // word jump + select
+import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController.js'               // Cmd+F, Cmd+H, Cmd+D
+import 'monaco-editor/esm/vs/editor/contrib/multicursor/browser/multicursor.js'           // Cmd+D multi-select
+import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js'                   // code folding
+import 'monaco-editor/esm/vs/editor/contrib/comment/browser/comment.js'                   // Cmd+/ toggle comment
+import 'monaco-editor/esm/vs/editor/contrib/indentation/browser/indentation.js'           // re-indent commands
+import 'monaco-editor/esm/vs/editor/contrib/smartSelect/browser/smartSelect.js'           // expand/shrink selection
+import 'monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching.js'   // bracket highlight + jump
+import 'monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/highlightDecorations.js' // highlight word occurrences
+import 'monaco-editor/esm/vs/editor/contrib/caretOperations/browser/caretOperations.js'   // transpose chars
+import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'             // cursor stack undo
+import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'           // hover tooltips (diagnostics, symbols)
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
+import { AstPanel } from './ast-panel.js'
 import { CpsPanel } from './cps-panel.js'
 import { defineTheme } from './theme.js'
 
@@ -42,9 +57,34 @@ const wasmReady = new Promise<void>(resolve => { resolveWasmReady = resolve })
 // so the tokenizer cache is always up-to-date before Monaco asks for tokens.
 let lastSemanticTokens: Uint32Array = new Uint32Array(0)
 let lastDiagnostics: string = '[]'
+let lastParseMs = 0
 
-function reparse(src: string, modelVersion: number): void {
+// Forward declaration — defined after the editor is created (needs DOM + editor).
+let applyDiagnosticToggles: () => void = () => {}
+
+let lastReparsedHash = ''
+
+function srcHash(src: string): string {
+  let h = 5381
+  for (let i = 0; i < src.length; i++) h = (h * 33 ^ src.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}
+
+function reparse(src: string, _modelVersion: number): void {
   if (!ParsedDocument) return
+  const hash = srcHash(src)
+  if (hash === lastReparsedHash) return
+  lastReparsedHash = hash
+  try {
+    _reparse(src, _modelVersion)
+  } catch (e) {
+    console.error('[fink] reparse crashed:', e)
+    // Reset hash so the next edit retries
+    lastReparsedHash = ''
+  }
+}
+
+function _reparse(src: string, _modelVersion: number): void {
   const t0 = performance.now()
   const doc = new ParsedDocument(src)
   const t1 = performance.now()
@@ -52,19 +92,23 @@ function reparse(src: string, modelVersion: number): void {
   lastDiagnostics = doc.get_diagnostics()
   const rawTokensJson = doc.get_tokens()
   const highlightTokensJson = doc.get_highlight_tokens()
+  const astJson = doc.get_ast()
   const cpsJson = doc.get_cps()
   const cpsLiftedJson = doc.get_cps_lifted()
   doc.free()
   const t2 = performance.now()
   const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
-  tokenizer.update(highlightTokens, modelVersion, src)
+  tokenizer.update(highlightTokens, _modelVersion, src)
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
+  astPanel?.update(astJson, lastDiagnostics)
   cpsPanel?.update(cpsJson, ParsedDocument)
   cpsPanel?.updateSrcTokens(highlightTokens)
   cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
   cpsPanelLifted?.updateSrcTokens(highlightTokens)
   const t3 = performance.now()
+  lastParseMs = t1 - t0
+  statusParseEl?.updateTime(lastParseMs)
   console.log(`[fink] parse=${(t1-t0).toFixed(1)}ms get_tokens=${(t2-t1).toFixed(1)}ms tokenizer.update=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms src=${src.length}chars`)
 }
 
@@ -102,6 +146,8 @@ tokenizer.register()
 
 // Tokens panel — initialized after the editor is created (see below).
 let tokensPanel: TokensPanel | null = null
+// AST panel — initialized after the editor is created (see below).
+let astPanel: AstPanel | null = null
 // CPS panels — initialized after the editor is created (see below).
 let cpsPanel: CpsPanel | null = null
 let cpsPanelLifted: CpsPanel | null = null
@@ -157,24 +203,10 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
   },
   async provideDocumentSemanticTokens(model) {
     await wasmReady
-    reparse(model.getValue(), model.getVersionId())
-    const parsed = JSON.parse(lastDiagnostics) as Array<{
-      line: number, col: number, endLine: number, endCol: number,
-      message: string, source: string, severity: string
-    }>
-    monaco.editor.setModelMarkers(model, 'fink', parsed.map(d => ({
-      startLineNumber: d.line + 1,
-      startColumn: d.col + 1,
-      endLineNumber: d.endLine + 1,
-      endColumn: Math.max(d.endCol + 1, d.col + 2),
-      message: d.message,
-      severity: d.severity === 'error'
-        ? monaco.MarkerSeverity.Error
-        : d.severity === 'warning'
-          ? monaco.MarkerSeverity.Warning
-          : monaco.MarkerSeverity.Info,
-      source: d.source,
-    })))
+    const src = model.getValue()
+    reparse(src, model.getVersionId())
+    if (src.trim()) applyDiagnosticToggles()
+    else monaco.editor.setModelMarkers(model, 'fink', [])
     return { data: lastSemanticTokens, resultId: undefined }
   },
   releaseDocumentSemanticTokens() {},
@@ -212,6 +244,82 @@ const editor = monaco.editor.create(editorEl, {
   automaticLayout: true,
 })
 
+// Explicitly bind Alt+Up/Down (move line) and Alt+Left/Right (word jump)
+// so macOS/browser doesn't intercept them before Monaco sees them.
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+  () => editor.trigger('keyboard', 'editor.action.moveLinesUpAction', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+  () => editor.trigger('keyboard', 'editor.action.moveLinesDownAction', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow,
+  () => editor.trigger('keyboard', 'cursorWordStartLeft', null))
+editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow,
+  () => editor.trigger('keyboard', 'cursorWordEndRight', null))
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+const statusPosEl = document.getElementById('fink-status-pos')!
+const statusParseEl = {
+  el: document.getElementById('fink-status-parse')!,
+  updateTime(ms: number) { this.el.textContent = `parse ${ms.toFixed(1)}ms` },
+}
+
+editor.onDidChangeCursorPosition(e => {
+  statusPosEl.textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`
+})
+
+// Diagnostic toggle state
+let showErrors = true
+let showWarnings = true
+
+const errBtn = document.getElementById('fink-toggle-errors') as HTMLButtonElement
+const warnBtn = document.getElementById('fink-toggle-warnings') as HTMLButtonElement
+
+applyDiagnosticToggles = function(): void {
+  const model = editor.getModel()
+  if (!model) return
+  const all = JSON.parse(lastDiagnostics) as Array<{
+    line: number, col: number, endLine: number, endCol: number,
+    message: string, source: string, severity: string
+  }>
+  const filtered = all.filter(d =>
+    (d.severity === 'error' && showErrors) ||
+    (d.severity === 'warning' && showWarnings) ||
+    (d.severity !== 'error' && d.severity !== 'warning')
+  )
+  monaco.editor.setModelMarkers(model, 'fink', filtered.map(d => ({
+    startLineNumber: d.line + 1,
+    startColumn: d.col + 1,
+    endLineNumber: d.endLine + 1,
+    endColumn: Math.max(d.endCol + 1, d.col + 2),
+    message: d.message,
+    severity: d.severity === 'error'
+      ? monaco.MarkerSeverity.Error
+      : d.severity === 'warning'
+        ? monaco.MarkerSeverity.Warning
+        : monaco.MarkerSeverity.Info,
+    source: d.source,
+  })))
+
+  // Update button counts
+  const errorCount = all.filter(d => d.severity === 'error').length
+  const warnCount  = all.filter(d => d.severity === 'warning').length
+  errBtn.textContent  = `${errorCount} Error${errorCount !== 1 ? 's' : ''}`
+  warnBtn.textContent = `${warnCount} Warning${warnCount !== 1 ? 's' : ''}`
+  errBtn.classList.toggle('active', showErrors)
+  warnBtn.classList.toggle('active', showWarnings)
+}
+
+errBtn.addEventListener('click', () => {
+  showErrors = !showErrors
+  applyDiagnosticToggles()
+})
+warnBtn.addEventListener('click', () => {
+  showWarnings = !showWarnings
+  applyDiagnosticToggles()
+})
+
 // Reparse synchronously on every content change so the tokenizer cache is
 // updated before Monaco asks for syntactic tokens on the next frame.
 editor.onDidChangeModelContent(() => {
@@ -224,6 +332,19 @@ editor.onDidChangeModelContent(() => {
 // Right pane — tabbed panel (Tokens, Output, …)
 // ---------------------------------------------------------------------------
 
+// Tabs that participate in bidirectional cursor sync.
+const SYNC_TABS = new Set(['fink-tokens', 'fink-ast', 'fink-cps', 'fink-cps-lifted'])
+
+// Currently active tab id — used to gate cursor sync.
+let activeTab = 'fink-run-panel'
+
+function clearAllDecorations(): void {
+  tokensPanel?.clearEditorHighlight()
+  astPanel?.clearEditorHighlight()
+  cpsPanel?.clearAll()
+  cpsPanelLifted?.clearAll()
+}
+
 // Tab switching
 for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
   tab.addEventListener('click', () => {
@@ -231,14 +352,25 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     document.querySelector('.fink-tab-panel.active')?.classList.remove('active')
     tab.classList.add('active')
     document.getElementById(tab.dataset.tab!)?.classList.add('active')
-    if (tab.dataset.tab === 'fink-cps') cpsPanel?.layout()
-    if (tab.dataset.tab === 'fink-cps-lifted') cpsPanelLifted?.layout()
+    activeTab = tab.dataset.tab!
+    if (activeTab === 'fink-cps') cpsPanel?.layout()
+    if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.layout()
+    if (!SYNC_TABS.has(activeTab)) {
+      // Passive tab (e.g. Output) — clear all decorations and stop syncing.
+      clearAllDecorations()
+    }
   })
 }
 
 // Tokens panel — pill view with bidirectional cursor sync
 tokensPanel = new TokensPanel(
   document.getElementById('fink-tokens')!,
+  editor,
+)
+
+// AST panel — indented tree with bidirectional cursor sync
+astPanel = new AstPanel(
+  document.getElementById('fink-ast')!,
   editor,
 )
 
@@ -262,36 +394,26 @@ cpsPanel.onWillHighlightSrc = () => cpsPanelLifted?.clearSrcHighlight()
 cpsPanelLifted.onWillHighlightSrc = () => cpsPanel?.clearSrcHighlight()
 
 editor.onDidFocusEditorText(() => {
-  tokensPanel.clearEditorHighlight()
-  cpsPanel?.clearAll()
-  cpsPanelLifted?.clearAll()
-  cpsPanelLifted?.clearSrcHighlight()
-  cpsPanel?.syncFromSource(
-    editor.getPosition()!.lineNumber - 1,
-    editor.getPosition()!.column - 1,
-  )
-  cpsPanelLifted?.syncFromSource(
-    editor.getPosition()!.lineNumber - 1,
-    editor.getPosition()!.column - 1,
-  )
+  if (!SYNC_TABS.has(activeTab)) return
+  clearAllDecorations()
+  const pos = editor.getPosition()!
+  const line = pos.lineNumber - 1
+  const col = pos.column - 1
+  if (activeTab === 'fink-tokens') tokensPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
+  if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
 })
 
 editor.onDidChangeCursorPosition(e => {
-  tokensPanel.clearEditorHighlight()
-  cpsPanel?.clearSrcHighlight()
-  cpsPanelLifted?.clearSrcHighlight()
-  tokensPanel.highlightAtPosition(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
-  cpsPanel?.syncFromSource(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
-  cpsPanelLifted?.syncFromSource(
-    e.position.lineNumber - 1,
-    e.position.column - 1,
-  )
+  if (!SYNC_TABS.has(activeTab)) return
+  clearAllDecorations()
+  const line = e.position.lineNumber - 1
+  const col = e.position.column - 1
+  if (activeTab === 'fink-tokens') tokensPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
+  if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
+  if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
 })
 
 // ---------------------------------------------------------------------------

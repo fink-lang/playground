@@ -9,7 +9,7 @@
 //   cpsToSrc[cps_line][cps_col] → { srcLine, srcCol }
 //   srcToFirst[src_line][src_col] → { cpsLine, cpsCol }  (first mapping for each src pos)
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 

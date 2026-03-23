@@ -4,7 +4,7 @@
 // Bidirectional cursor sync: clicking a pill moves the editor cursor;
 // moving the editor cursor highlights the corresponding pill.
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import { kindToScope, type LexToken } from './tokenizer.js'
 
 // Map Monaco scope → CSS variable name for coloring pills.

@@ -7,13 +7,13 @@
     "dev": "node build.mjs && npx servor build index.html 3000 --reload"
   },
   "dependencies": {
-    "monaco-editor": "^0.52.2"
+    "monaco-editor": "^0.55.1"
   },
   "devDependencies": {
-    "@types/node": "^22.13.0",
-    "@semantic-release/github": "^11.0.0",
-    "esbuild": "^0.25.1",
-    "semantic-release": "^24.0.0",
+    "@semantic-release/github": "^12.0.6",
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.27.4",
+    "semantic-release": "^25.0.3",
     "servor": "^4.0.2",
     "typescript": "^5.7.3"
   }

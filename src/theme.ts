@@ -28,7 +28,7 @@
 //   --fink-editor-highlight-bg      active/selected item background
 //   --fink-editor-highlight-border  active/selected item border
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 
 // Hidden element used to resolve CSS color values (including light-dark()).
 // Appended to documentElement so it inherits the same color-scheme context.

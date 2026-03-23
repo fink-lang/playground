@@ -11,7 +11,7 @@
 // Token kind → Monaco scope mapping mirrors the TM grammar scopes so the
 // existing fink theme rules apply without changes.
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 
 // Raw token from get_tokens() JSON
 export interface LexToken {

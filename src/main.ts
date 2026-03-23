@@ -16,7 +16,7 @@
   },
 }
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 // Contributions — each registers its commands/keybindings when imported.
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
 import 'monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations.js'   // move/duplicate/delete line

@@ -13,7 +13,7 @@
 //     does source sync only.
 //   - Collapsed state is keyed by AstNode.id and survives update() calls.
 
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 
 export interface AstNode {
   id: number

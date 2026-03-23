@@ -804,19 +804,38 @@ impl ParsedDocument {
         collect_tokens(&parse_result.root, &mut raw_tokens);
         let semantic_tokens = delta_encode(raw_tokens);
 
-        // --- Name resolution ---
+        ParsedDocument {
+            src: src.to_string(),
+            semantic_tokens,
+            diagnostics: format!("[{}]", diag_entries.join(",")),
+            lexer_tokens,
+            highlight_tokens,
+            node_locs: vec![],
+            bind_ids: vec![],
+            idents: vec![],
+        }
+    }
+
+    /// Run CPS transform + name resolution.
+    /// Called separately from new() so that a panic (wasm trap) in the CPS
+    /// pass doesn't take down lexing, parsing, or semantic tokens.
+    /// On success, updates diagnostics with name-resolution warnings/errors.
+    pub fn run_analysis(&mut self) {
+        let parse_result = match parser::parse(&self.src) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
         let ast_index = ast::build_index(&parse_result);
         let cps = lower_expr(&parse_result.root);
         let node_count = cps.origin.len();
         let resolved = name_res::resolve(&cps.root, &cps.origin, &ast_index, node_count);
 
-        // --- Build owned lookup tables ---
         let mut node_locs: Vec<Option<Loc>> = Vec::with_capacity(node_count);
         let mut bind_ids: Vec<Option<u32>> = Vec::with_capacity(node_count);
         let mut idents: Vec<IdentEntry> = Vec::new();
+        let mut diag_entries: Vec<String> = Vec::new();
 
-        // For unused-binding diagnostics: track all bind sites and all referenced binds.
-        // Module-level bindings (scope == root) are exports — skip unused warning for those.
         let root_scope_id = cps.root.id;
         let mut bind_sites: Vec<u32> = Vec::new();
         let mut used_binds: HashSet<u32> = HashSet::new();
@@ -824,7 +843,6 @@ impl ParsedDocument {
         for i in 0..node_count {
             let cps_id = CpsId(i as u32);
 
-            // Map CPS node → source location
             let loc = cps.origin.get(cps_id)
                 .and_then(|ast_id| *ast_index.get(ast_id))
                 .map(|node| Loc {
@@ -835,13 +853,10 @@ impl ParsedDocument {
                 });
             node_locs.push(loc);
 
-            // Map CPS node → its binding CpsId
             let bind_id = if let Some(id) = resolution_bind_id(resolved.resolution.get(cps_id)) {
-                // This is a reference — resolves to a binding
                 used_binds.insert(id.0);
                 Some(id.0)
             } else if resolved.bind_scope.get(cps_id).is_some() {
-                // This IS a binding site — points to itself
                 bind_sites.push(i as u32);
                 Some(i as u32)
             } else {
@@ -849,7 +864,6 @@ impl ParsedDocument {
             };
             bind_ids.push(bind_id);
 
-            // Build ident index for cursor hit-testing
             if let Some(loc) = loc {
                 if let Some(ast_id) = *cps.origin.get(cps_id) {
                     if let Some(node) = *ast_index.get(ast_id) {
@@ -860,7 +874,6 @@ impl ParsedDocument {
                 }
             }
 
-            // Name resolution diagnostics — unresolved names as warnings
             if let Some(Resolution::Unresolved) = resolved.resolution.get(cps_id) {
                 if let Some(ast_id) = *cps.origin.get(cps_id) {
                     if let Some(node) = *ast_index.get(ast_id) {
@@ -880,8 +893,6 @@ impl ParsedDocument {
             }
         }
 
-        // Unused-binding diagnostics — warn on bind sites with no references.
-        // Skip module-level bindings (they are exports).
         for bind_idx in bind_sites {
             if used_binds.contains(&bind_idx) { continue; }
             let cps_id = CpsId(bind_idx);
@@ -903,18 +914,22 @@ impl ParsedDocument {
             }
         }
 
-        // Sort idents by position for binary search
         idents.sort_by(|a, b| a.loc.line.cmp(&b.loc.line).then(a.loc.col.cmp(&b.loc.col)));
 
-        ParsedDocument {
-            src: src.to_string(),
-            semantic_tokens,
-            diagnostics: format!("[{}]", diag_entries.join(",")),
-            lexer_tokens,
-            highlight_tokens,
-            node_locs,
-            bind_ids,
-            idents,
+        self.node_locs = node_locs;
+        self.bind_ids = bind_ids;
+        self.idents = idents;
+
+        // Merge analysis diagnostics into existing diagnostics
+        if !diag_entries.is_empty() {
+            let existing = &self.diagnostics;
+            if existing == "[]" {
+                self.diagnostics = format!("[{}]", diag_entries.join(","));
+            } else {
+                // Insert before closing ']'
+                let base = &existing[..existing.len() - 1];
+                self.diagnostics = format!("{},{}]", base, diag_entries.join(","));
+            }
         }
     }
 

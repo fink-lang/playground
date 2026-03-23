@@ -384,6 +384,7 @@ fn collect_tokens<'src>(node: &'src Node<'src>, tokens: &mut Vec<RawToken>) {
         // --- recurse into all other container nodes ---
 
         NodeKind::LitSeq { items: children, .. }
+        | NodeKind::Module(children)
         | NodeKind::Patterns(children) => {
             for child in &children.items {
                 collect_tokens(child, tokens);
@@ -598,6 +599,7 @@ fn node_kind_label<'a>(node: &'a ast::Node<'a>) -> (&'static str, String) {
         Try(_)             => ("Try",         String::new()),
         Yield(_)           => ("Yield",       String::new()),
         Block { sep, .. }  => ("Block",       sep.src.to_string()),
+        Module(_)          => ("Module",      String::new()),
     }
 }
 
@@ -610,7 +612,8 @@ fn serialize_children(node: &ast::Node) -> String {
         LitBool(_) | LitInt(_) | LitFloat(_) | LitDecimal(_) | LitStr { .. }
         | Ident(_) | Partial | Wildcard => {}
 
-        LitSeq { items, .. } | LitRec { items, .. } | Pipe(items) | Patterns(items) => {
+        LitSeq { items, .. } | LitRec { items, .. } | Pipe(items) | Patterns(items)
+        | Module(items) => {
             for child in &items.items { parts.push(serialize_node(child)); }
         }
         StrTempl { children, .. } | StrRawTempl { children, .. } => {

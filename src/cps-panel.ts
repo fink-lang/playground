@@ -157,7 +157,7 @@ export class CpsPanel {
     this.cpsEditor = monaco.editor.create(container, {
       value: '',
       language: langId,
-      theme: 'fink-dark',
+      theme: 'fink',
       readOnly: true,
       fontSize: 14,
       fontFamily: '"Hack", "Consolas", "Menlo", monospace',

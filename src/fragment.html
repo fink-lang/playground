@@ -101,8 +101,8 @@
   /* --- Token highlight decoration in editor --- */
 
   .fink-token-highlight {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: var(--fink-editor-highlight-bg, rgba(255, 255, 255, 0.12));
+    border: 1px solid var(--fink-editor-highlight-border, rgba(255, 255, 255, 0.25));
     border-radius: 3px;
   }
 
@@ -131,7 +131,7 @@
     background: var(--fink-editor-surface, #252526);
   }
   .fink-token-pill.fink-token-active {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--fink-editor-highlight-bg, rgba(255, 255, 255, 0.08));
     border-color: var(--fink-editor-fg-dim, #858585);
     outline: 1px solid var(--fink-editor-fg-dim, #858585);
   }
@@ -172,8 +172,8 @@
     background: var(--fink-editor-surface, #252526);
   }
   .fink-ast-row.fink-ast-active {
-    background: rgba(255, 255, 255, 0.07);
-    outline: 1px solid rgba(255, 255, 255, 0.15);
+    background: var(--fink-editor-highlight-bg, rgba(255, 255, 255, 0.07));
+    outline: 1px solid var(--fink-editor-highlight-border, rgba(255, 255, 255, 0.15));
     outline-offset: -1px;
   }
 

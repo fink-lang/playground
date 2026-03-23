@@ -9,7 +9,7 @@
 // served from an outdated cache.
 //
 // Token kind → Monaco scope mapping mirrors the TM grammar scopes so the
-// existing fink-dark theme rules apply without changes.
+// existing fink theme rules apply without changes.
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 

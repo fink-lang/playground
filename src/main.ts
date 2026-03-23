@@ -38,7 +38,7 @@ import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
 import { AstPanel } from './ast-panel.js'
 import { CpsPanel } from './cps-panel.js'
-import { defineTheme } from './theme.js'
+import { defineTheme, watchColorScheme } from './theme.js'
 
 // ---------------------------------------------------------------------------
 // Analysis WASM (semantic tokens, diagnostics)
@@ -217,6 +217,7 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
 // ---------------------------------------------------------------------------
 
 defineTheme()
+watchColorScheme()
 
 // ---------------------------------------------------------------------------
 // Editor
@@ -228,7 +229,7 @@ const editorEl = document.getElementById('fink-editor')!
 const editor = monaco.editor.create(editorEl, {
   value: INITIAL_CODE,
   language: 'fink',
-  theme: 'fink-dark',
+  theme: 'fink',
   fontSize: 14,
   fontFamily: '"Hack", "Consolas", "Menlo", monospace',
   minimap: { enabled: false },

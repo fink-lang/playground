@@ -1,6 +1,11 @@
 // Fink Monaco theme — reads colors from CSS variables so the embedding page
 // (e.g. fink-lang.org) can theme the editor by setting --fink-editor-* vars.
 //
+// The embedding page may use light-dark() in its CSS variables. Since custom
+// properties return raw token sequences from getComputedStyle, we resolve them
+// by pushing each variable through a temporary element's `color` property,
+// which the browser resolves to a concrete rgb() value.
+//
 // Variable reference:
 //   --fink-editor-bg              editor background
 //   --fink-editor-fg              default text
@@ -20,11 +25,39 @@
 //   --fink-editor-color-bracket   bracket pair color 1
 //   --fink-editor-color-bracket2  bracket pair color 2
 //   --fink-editor-color-bracket3  bracket pair color 3
+//   --fink-editor-highlight-bg      active/selected item background
+//   --fink-editor-highlight-border  active/selected item border
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
+// Hidden element used to resolve CSS color values (including light-dark()).
+// Appended to documentElement so it inherits the same color-scheme context.
+const probe = document.createElement('div')
+probe.style.display = 'none'
+document.documentElement.appendChild(probe)
+
+// Resolve a CSS variable to a 6-digit uppercase hex string (without '#').
+// Sets the probe's color to var(--name), reads the computed rgb(), converts.
 function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/^#/, '').toUpperCase()
+  probe.style.color = `var(${name})`
+  const resolved = getComputedStyle(probe).color
+  // getComputedStyle returns "rgb(r, g, b)" or "rgba(r, g, b, a)"
+  const m = resolved.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/)
+  if (m) {
+    const hex = (i: number) => parseInt(m[i]).toString(16).padStart(2, '0')
+    return (hex(1) + hex(2) + hex(3)).toUpperCase()
+  }
+  // Fallback: try to use the raw custom property value (plain hex)
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return raw.replace(/^#/, '').toUpperCase()
+}
+
+// Detect whether the current color scheme is dark.
+function isDark(): boolean {
+  const cs = getComputedStyle(document.documentElement).colorScheme
+  if (cs.includes('dark')) return true
+  if (cs.includes('light')) return false
+  return matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 export function defineTheme(): void {
@@ -46,8 +79,8 @@ export function defineTheme(): void {
   const bracket2 = '#' + cssVar('--fink-editor-color-bracket2')
   const bracket3 = '#' + cssVar('--fink-editor-color-bracket3')
 
-  monaco.editor.defineTheme('fink-dark', {
-    base: 'vs-dark',
+  monaco.editor.defineTheme('fink', {
+    base: isDark() ? 'vs-dark' : 'vs',
     inherit: true,
     semanticHighlighting: true,
     rules: [
@@ -84,5 +117,23 @@ export function defineTheme(): void {
       'editorBracketHighlight.foreground6': bracket3,
       'editorBracketHighlight.unexpectedBracket.foreground': '#FF000066',
     },
+  })
+
+  monaco.editor.setTheme('fink')
+}
+
+// Re-apply the Monaco theme when the host page's color scheme changes.
+// Covers both OS-level preference flips and pages that toggle color-scheme
+// via inline style or class on <html>.
+export function watchColorScheme(): void {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    defineTheme()
+  })
+
+  new MutationObserver(() => {
+    defineTheme()
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['style', 'class'],
   })
 }

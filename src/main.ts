@@ -86,16 +86,30 @@ function reparse(src: string, _modelVersion: number): void {
 
 function _reparse(src: string, _modelVersion: number): void {
   const t0 = performance.now()
-  const doc = new ParsedDocument(src)
+  // Parse + lex (always safe).
+  let doc = new ParsedDocument(src)
   const t1 = performance.now()
   lastSemanticTokens = doc.get_semantic_tokens()
   lastDiagnostics = doc.get_diagnostics()
   const rawTokensJson = doc.get_tokens()
   const highlightTokensJson = doc.get_highlight_tokens()
   const astJson = doc.get_ast()
-  const cpsJson = doc.get_cps()
-  const cpsLiftedJson = doc.get_cps_lifted()
-  doc.free()
+  // CPS + name resolution — run separately so a crash doesn't lose
+  // lexer tokens, AST, or semantic tokens.  A wasm trap poisons the
+  // wasm-bindgen handle, so on failure we free & recreate the doc to
+  // keep the handle healthy for future calls.
+  let cpsJson = ''
+  let cpsLiftedJson = ''
+  try {
+    doc.run_analysis()
+    lastDiagnostics = doc.get_diagnostics()
+    cpsJson = doc.get_cps()
+    cpsLiftedJson = doc.get_cps_lifted()
+    doc.free()
+  } catch (e) {
+    console.warn('[fink] CPS analysis crashed (name resolution disabled):', e)
+    try { doc.free() } catch (_) { /* handle already poisoned */ }
+  }
   const t2 = performance.now()
   const highlightTokens: LexToken[] = JSON.parse(highlightTokensJson)
   tokenizer.update(highlightTokens, _modelVersion, src)

@@ -229,7 +229,11 @@ export class CpsPanel {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   update(cpsJson: string, ParsedDocument: any): void {
     let code = ''
-    try {
+    if (!cpsJson) {
+      // CPS transform crashed — show error in the editor
+      code = '---\nOops! You found a bug in the CPS transform.\nThe ƒink compiler is still in early stages of development — this will be fixed soon.\nFeel free to open a ticket: github.com/fink-lang/fink/issues\n---'
+      this.lookup = null
+    } else try {
       const parsed = JSON.parse(cpsJson) as { code: string; map: string }
       code = parsed.code
       const mapObj = JSON.parse(parsed.map) as { mappings: string }

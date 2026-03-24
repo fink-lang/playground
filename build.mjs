@@ -13,7 +13,7 @@
 //          (avoids re-entrant grammar loads in vscode-textmate)
 //        - Strip meta.scope-example.* rules (grammar documentation scaffolding
 //          with empty begin/while patterns that cause infinite recursion)
-//   5. Copy analysis WASM files from lib/ (fink_wasm.js + fink_wasm_bg.wasm)
+//   5. Copy analysis WASM files from crate/pkg/ (fink_wasm.js + fink_wasm_bg.wasm)
 //   6. Copy src/index.html
 
 import * as esbuild from 'esbuild'
@@ -28,17 +28,13 @@ const require = createRequire(import.meta.url)
 const OUT = 'build'
 
 fs.mkdirSync(OUT, { recursive: true })
-fs.mkdirSync('lib', { recursive: true })
 
 // ---------------------------------------------------------------------------
-// 0. Build Rust WASM crate → lib/
+// 0. Build Rust WASM crate → crate/pkg/
 // ---------------------------------------------------------------------------
 
 execSync('wasm-pack build --target web', { cwd: 'crate', stdio: 'inherit' })
-for (const file of ['fink_playground_wasm.js', 'fink_playground_wasm_bg.wasm', 'fink_playground_wasm.d.ts']) {
-  fs.copyFileSync(`crate/pkg/${file}`, `lib/${file}`)
-}
-console.log('  built crate → lib/')
+console.log('  built crate → crate/pkg/')
 
 // ---------------------------------------------------------------------------
 // 1. Monaco editor worker (iife — workers don't use ES modules by default)
@@ -98,13 +94,13 @@ console.log('  copied monaco.css')
 // ---------------------------------------------------------------------------
 
 for (const file of ['fink_playground_wasm.js', 'fink_playground_wasm_bg.wasm']) {
-  const src = path.join('lib', file)
+  const src = path.join('crate/pkg', file)
   if (!fs.existsSync(src)) {
     console.warn(`  WARNING: ${src} not found — semantic tokens will be disabled`)
     continue
   }
   fs.copyFileSync(src, `${OUT}/${file}`)
-  console.log(`  copied lib/${file}`)
+  console.log(`  copied crate/pkg/${file}`)
 }
 
 // ---------------------------------------------------------------------------

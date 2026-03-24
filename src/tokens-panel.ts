@@ -96,12 +96,6 @@ export class TokensPanel {
 
     this.container.innerHTML = ''
     this.container.appendChild(frag)
-
-    // Sync with current cursor position
-    const pos = this.editor.getPosition()
-    if (pos) {
-      this.highlightAtPosition(pos.lineNumber - 1, pos.column - 1)
-    }
   }
 
   clearEditorHighlight(): void {

@@ -105,12 +105,6 @@ export class AstPanel {
 
     this.renderNode(root, this.container, 0)
     this.rebuildFlat()
-
-    // Sync with current cursor position after update
-    const pos = this.editor.getPosition()
-    if (pos) {
-      this.highlightAtPosition(pos.lineNumber - 1, pos.column - 1)
-    }
   }
 
   // Render one node as a group (row + children wrapper) and recurse.

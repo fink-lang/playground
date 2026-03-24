@@ -32,6 +32,8 @@ import 'monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/highlightDec
 import 'monaco-editor/esm/vs/editor/contrib/caretOperations/browser/caretOperations.js'   // transpose chars
 import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'             // cursor stack undo
 import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'           // hover tooltips (diagnostics, symbols)
+import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/goToCommands.js'           // go-to-definition (F12 / Cmd+click)
+import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/link/goToDefinitionAtPosition.js' // Ctrl/Cmd+click inline
 import { compile } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
@@ -58,6 +60,11 @@ const wasmReady = new Promise<void>(resolve => { resolveWasmReady = resolve })
 let lastSemanticTokens: Uint32Array = new Uint32Array(0)
 let lastDiagnostics: string = '[]'
 let lastParseMs = 0
+
+// Last ParsedDocument kept alive for cursor-time queries (go-to-def, references).
+// Freed and replaced on every successful re-parse.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let lastDoc: any = null
 
 // Forward declaration — defined after the editor is created (needs DOM + editor).
 let applyDiagnosticToggles: () => void = () => {}
@@ -105,7 +112,9 @@ function _reparse(src: string, _modelVersion: number): void {
     lastDiagnostics = doc.get_diagnostics()
     cpsJson = doc.get_cps()
     cpsLiftedJson = doc.get_cps_lifted()
-    doc.free()
+    // Keep doc alive for cursor-time queries (go-to-def, references).
+    if (lastDoc) try { lastDoc.free() } catch (_) { /* already freed */ }
+    lastDoc = doc
   } catch (e) {
     console.warn('[fink] CPS analysis crashed (name resolution disabled):', e)
     try { doc.free() } catch (_) { /* handle already poisoned */ }
@@ -233,6 +242,27 @@ monaco.languages.registerDocumentSemanticTokensProvider('fink', {
     return { data: lastSemanticTokens, resultId: undefined }
   },
   releaseDocumentSemanticTokens() {},
+})
+
+// Definition provider — delegates to the WASM ParsedDocument kept alive across
+// re-parses. Requires run_analysis() to have succeeded (name resolution).
+monaco.languages.registerDefinitionProvider('fink', {
+  provideDefinition(model, position) {
+    if (!lastDoc) return undefined
+    // Monaco positions are 1-based; WASM API is 0-based.
+    const data: Uint32Array = lastDoc.get_definition(
+      position.lineNumber - 1,
+      position.column - 1,
+    )
+    if (data.length !== 4) return undefined
+    return {
+      uri: model.uri,
+      range: new monaco.Range(
+        data[0] + 1, data[1] + 1,
+        data[2] + 1, data[3] + 1,
+      ),
+    }
+  },
 })
 
 // ---------------------------------------------------------------------------
@@ -382,6 +412,18 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     if (!SYNC_TABS.has(activeTab)) {
       // Passive tab (e.g. Output) — clear all decorations and stop syncing.
       clearAllDecorations()
+    } else {
+      // Sync tab activated — sync to current cursor position.
+      clearAllDecorations()
+      const pos = editor.getPosition()
+      if (pos) {
+        const line = pos.lineNumber - 1
+        const col = pos.column - 1
+        if (activeTab === 'fink-tokens') tokensPanel?.highlightAtPosition(line, col)
+        if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
+        if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
+        if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
+      }
     }
   })
 }

@@ -3,6 +3,7 @@
 // Usage:
 //   node deps.mjs check    — show outdated npm, cargo, and fink deps
 //   node deps.mjs update   — update all deps to latest
+//   node deps.mjs install  — install all deps from lockfiles (local + CI)
 //
 // The fink crate dependency is pinned to a git tag in crate/Cargo.toml.
 // This script queries the GitHub releases API to detect newer versions
@@ -119,6 +120,18 @@ async function update() {
 }
 
 // ---------------------------------------------------------------------------
+// install
+// ---------------------------------------------------------------------------
+
+function install() {
+  console.log('npm ci:')
+  console.log(run('npm ci'))
+
+  console.log('\nwasm-pack build (crate/):')
+  console.log(run('wasm-pack build --target web', { cwd: 'crate' }))
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -131,7 +144,10 @@ switch (cmd) {
   case 'update':
     await update()
     break
+  case 'install':
+    install()
+    break
   default:
-    console.error('Usage: node deps.mjs [check | update]')
+    console.error('Usage: node deps.mjs [check | update | install]')
     process.exit(1)
 }

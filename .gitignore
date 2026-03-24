@@ -1,8 +1,8 @@
 node_modules/
 build/
+crate/pkg/
 dist/
 target/
-lib/
 .DS_Store
 
 # Claude local config

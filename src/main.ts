@@ -146,6 +146,13 @@ async function loadAnalysisWasm(): Promise<void> {
   ParsedDocument = mod.ParsedDocument
   resolveWasmReady()
   console.log('[fink] analysis WASM ready')
+
+  // If the editor already has content (e.g. decoded from URL hash), reparse
+  // now so highlighting is applied immediately.
+  const model = editor.getModel()
+  if (model && model.getValue()) {
+    reparse(model.getValue(), model.getVersionId())
+  }
 }
 
 // ---------------------------------------------------------------------------

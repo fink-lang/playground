@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "node build.mjs && npx servor build index.html 3000 --reload"
+    "dev": "node build.mjs && npx servor build index.html 3000 --reload",
+    "check-deps": "node deps.mjs check",
+    "update-deps": "node deps.mjs update"
   },
   "dependencies": {
     "monaco-editor": "^0.55.1"

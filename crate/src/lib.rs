@@ -829,7 +829,7 @@ impl ParsedDocument {
         let ast_index = ast::build_index(&parse_result);
         let cps = lower_expr(&parse_result.root);
         let node_count = cps.origin.len();
-        let resolved = name_res::resolve(&cps.root, &cps.origin, &ast_index, node_count);
+        let resolved = name_res::resolve(&cps.root, &cps.origin, &ast_index, node_count, &cps.synth_alias);
 
         let mut node_locs: Vec<Option<Loc>> = Vec::with_capacity(node_count);
         let mut bind_ids: Vec<Option<u32>> = Vec::with_capacity(node_count);

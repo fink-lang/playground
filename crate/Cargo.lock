@@ -28,8 +28,8 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fink"
-version = "0.1.0"
-source = "git+https://github.com/fink-lang/fink.git?branch=main#c311109ecd6f92540a3094d6215b6fa4fe97d9b7"
+version = "0.0.0"
+source = "git+https://github.com/fink-lang/fink.git?tag=v0.1.0#1a61a6b21aa0ad51c2f03e4062df64f774a17ae1"
 dependencies = [
  "wasm-encoder",
  "wasmparser",

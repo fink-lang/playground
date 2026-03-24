@@ -37,19 +37,16 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm ci
+        run: make deps-install
 
       - name: Build
-        run: NODE_ENV=production node build.mjs
-
-      - name: Package artifact
-        run: tar -czf playground.tar.gz -C build .
+        run: make build
 
       - name: Release
         if: github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
+        run: make release
 
       # On PRs, preview the next release version
       - name: Preview release version

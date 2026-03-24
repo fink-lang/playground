@@ -2,14 +2,7 @@
   "name": "fink-playground",
   "private": true,
   "type": "module",
-  "scripts": {
-    "clean": "rm -rf build crate/pkg",
-    "build": "node build.mjs",
-    "dev": "node build.mjs && npx servor build index.html 3000 --reload",
-    "check-deps": "node deps.mjs check",
-    "update-deps": "node deps.mjs update",
-    "install-deps": "node deps.mjs install"
-  },
+  "scripts": {},
   "dependencies": {
     "monaco-editor": "^0.55.1"
   },

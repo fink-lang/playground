@@ -147,11 +147,13 @@ async function loadAnalysisWasm(): Promise<void> {
   resolveWasmReady()
   console.log('[fink] analysis WASM ready')
 
-  // If the editor already has content (e.g. decoded from URL hash), reparse
-  // now so highlighting is applied immediately.
-  const model = editor.getModel()
-  if (model && model.getValue()) {
-    reparse(model.getValue(), model.getVersionId())
+  // If a URL-decoded source is waiting, inject it now that WASM is ready.
+  // Setting the value here ensures reparse() runs on the first content change
+  // with ParsedDocument available, so highlighting works immediately.
+  if (pendingSource !== null) {
+    editor.updateOptions({ readOnly: false })
+    editor.setValue(pendingSource)
+    pendingSource = null
   }
 }
 
@@ -532,12 +534,27 @@ async function decodeSource(encoded: string): Promise<string> {
   return new TextDecoder().decode(buf)
 }
 
-// On load: restore source from hash if present.
+// On load: decode URL hash but defer injection until WASM is ready so that
+// syntax highlighting works on first render.
+let pendingSource: string | null = null
 const initialHash = location.hash.slice(1)
 if (initialHash) {
+  editor.updateOptions({ readOnly: true })
   decodeSource(initialHash)
-    .then(src => editor.setValue(src))
-    .catch(err => console.warn('[fink] Failed to decode URL hash:', err))
+    .then(src => {
+      pendingSource = src
+      // If WASM is already loaded, inject immediately.
+      if (ParsedDocument) {
+        editor.updateOptions({ readOnly: false })
+        editor.setValue(pendingSource)
+        pendingSource = null
+      }
+    })
+    .catch(err => {
+      console.warn('[fink] Failed to decode URL hash:', err)
+      editor.updateOptions({ readOnly: false })
+      editor.setValue('')
+    })
 }
 
 // Share button: encode current source → update hash → copy URL to clipboard.

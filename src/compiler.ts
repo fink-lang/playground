@@ -2,7 +2,7 @@
 // WASM crate (fink_playground_wasm). Call setCompileModule() once the crate
 // is initialised (see main.ts) so compile() can delegate to it.
 
-type WasmModule = { compile: (src: string) => Uint8Array }
+type WasmModule = { compile: (src: string) => Uint8Array; compile_wat: (src: string) => string }
 
 let wasmMod: WasmModule | null = null
 
@@ -13,4 +13,9 @@ export function setCompileModule(mod: WasmModule): void {
 export async function compile(src: string): Promise<Uint8Array | null> {
   if (!wasmMod) return null
   return wasmMod.compile(src)
+}
+
+export function compileWat(src: string): string | null {
+  if (!wasmMod) return null
+  return wasmMod.compile_wat(src)
 }

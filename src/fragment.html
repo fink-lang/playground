@@ -225,7 +225,8 @@
   /* --- CPS panels --- */
 
   #fink-cps,
-  #fink-cps-lifted {
+  #fink-cps-lifted,
+  #fink-wat {
     overflow: hidden; /* Monaco manages its own scroll */
   }
 
@@ -322,6 +323,7 @@
         <button class="fink-tab" data-tab="fink-ast">AST</button>
         <button class="fink-tab" data-tab="fink-cps">CPS</button>
         <button class="fink-tab" data-tab="fink-cps-lifted">Lifted</button>
+        <button class="fink-tab" data-tab="fink-wat">WAT</button>
         <span class="fink-playground-tabs-spacer"></span>
         <button id="fink-share-btn">Share</button>
       </div>
@@ -336,6 +338,7 @@
         <div id="fink-ast" class="fink-tab-panel"></div>
         <div id="fink-cps" class="fink-tab-panel"></div>
         <div id="fink-cps-lifted" class="fink-tab-panel"></div>
+        <div id="fink-wat" class="fink-tab-panel"></div>
       </div>
     </div>
   </div>

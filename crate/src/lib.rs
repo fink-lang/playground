@@ -686,6 +686,25 @@ pub fn compile(src: &str) -> Result<Vec<u8>, JsValue> {
     Ok(result.wasm)
 }
 
+/// Compile Fink source and return the WAT text disassembly.
+/// Returns the WAT string on success, or throws a JS error on failure.
+#[wasm_bindgen]
+pub fn compile_wat(src: &str) -> Result<String, JsValue> {
+    use fink::ast::build_index;
+    use fink::parser::parse;
+    use fink::passes::closure_lifting::lift_all;
+    use fink::passes::cps::transform::lower_expr;
+    use fink::passes::wasm::codegen::codegen;
+
+    let r = parse(src).map_err(|e| JsValue::from_str(&e.message))?;
+    let ast_index = build_index(&r);
+    let cps = lower_expr(&r.root);
+    let (lifted, resolved) = lift_all(cps, &ast_index);
+    let result = codegen(&lifted, &resolved, &ast_index);
+    wasmprinter::print_bytes(&result.wasm)
+        .map_err(|e| JsValue::from_str(&format!("{e}")))
+}
+
 // ---------------------------------------------------------------------------
 
 /// Stateful parsed document - parse once, query many times.

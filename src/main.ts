@@ -34,12 +34,13 @@ import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'   
 import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'           // hover tooltips (diagnostics, symbols)
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/goToCommands.js'           // go-to-definition (F12 / Cmd+click)
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/link/goToDefinitionAtPosition.js' // Ctrl/Cmd+click inline
-import { compile, setCompileModule } from './compiler.js'
+import { compile, compileWat, setCompileModule } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
 import { AstPanel } from './ast-panel.js'
 import { CpsPanel } from './cps-panel.js'
+import { WatPanel } from './wat-panel.js'
 import { defineTheme, watchColorScheme } from './theme.js'
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,12 @@ function _reparse(src: string, _modelVersion: number): void {
   cpsPanel?.updateSrcTokens(highlightTokens)
   cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
   cpsPanelLifted?.updateSrcTokens(highlightTokens)
+  try {
+    const wat = compileWat(src)
+    if (wat !== null) watPanel?.update(wat)
+  } catch (e) {
+    console.warn('[fink] WAT compilation failed:', e)
+  }
   const t3 = performance.now()
   lastParseMs = t1 - t0
   statusParseEl?.updateTime(lastParseMs)
@@ -184,6 +191,8 @@ let astPanel: AstPanel | null = null
 // CPS panels — initialized after the editor is created (see below).
 let cpsPanel: CpsPanel | null = null
 let cpsPanelLifted: CpsPanel | null = null
+// WAT panel — initialized after the editor is created (see below).
+let watPanel: WatPanel | null = null
 
 monaco.languages.setLanguageConfiguration('fink', {
   comments: {
@@ -410,6 +419,7 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
     activeTab = tab.dataset.tab!
     if (activeTab === 'fink-cps') cpsPanel?.layout()
     if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.layout()
+    if (activeTab === 'fink-wat') watPanel?.layout()
     if (!SYNC_TABS.has(activeTab)) {
       // Passive tab (e.g. Output) — clear all decorations and stop syncing.
       clearAllDecorations()
@@ -452,6 +462,9 @@ cpsPanelLifted = new CpsPanel(
   document.getElementById('fink-cps-lifted')!,
   editor,
 )
+
+// WAT panel — read-only WAT disassembly, updated live on each reparse
+watPanel = new WatPanel(document.getElementById('fink-wat')!)
 
 // When a CPS panel becomes active, clear token decoration and the other CPS panel.
 cpsPanel.onActivate = () => { tokensPanel.clearEditorHighlight(); cpsPanelLifted?.clearAll() }

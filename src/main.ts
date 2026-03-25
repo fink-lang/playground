@@ -6,8 +6,8 @@
 // Analysis (semantic tokens, diagnostics, go-to-def, references) uses the
 // playground WASM crate loaded via dynamic import at runtime.
 //
-// Code execution uses the WASI shim (wasi-shim.ts) running in a sandboxed
-// iframe. The compiler slot is a placeholder for now (see compiler.ts).
+// Code execution: compile(src) → WASM binary via the playground crate's
+// compile() export, then run in a sandboxed WASI iframe (wasi-shim.ts).
 
 // MonacoEnvironment must be set before the editor creates its workers.
 ;(window as any).MonacoEnvironment = {
@@ -34,7 +34,7 @@ import 'monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo.js'   
 import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'           // hover tooltips (diagnostics, symbols)
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/goToCommands.js'           // go-to-definition (F12 / Cmd+click)
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/link/goToDefinitionAtPosition.js' // Ctrl/Cmd+click inline
-import { compile } from './compiler.js'
+import { compile, setCompileModule } from './compiler.js'
 import { run } from './wasi-shim.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
@@ -153,6 +153,7 @@ async function loadAnalysisWasm(): Promise<void> {
   console.log('[fink] glue module imported, calling init...')
   await mod.default(wasmBin)
   ParsedDocument = mod.ParsedDocument
+  setCompileModule(mod)
   resolveWasmReady()
   console.log('[fink] analysis WASM ready')
 
@@ -496,19 +497,25 @@ runBtn.addEventListener('click', async () => {
 
   try {
     const src = editor.getValue()
-    const wasm = await compile(src)
+    let wasm: Uint8Array | null
+    try {
+      wasm = await compile(src)
+    } catch (err) {
+      outputEl.textContent = `Compile error: ${err}`
+      outputEl.className = 'error'
+      return
+    }
     if (!wasm) {
       outputEl.textContent = 'Compiler not available yet.'
       outputEl.className = 'error'
       return
     }
     const result = await run(wasm)
-
     const text = result.stdout + result.stderr
     outputEl.textContent = text || '(no output)'
     outputEl.className = result.exitCode === 0 ? 'ok' : 'error'
   } catch (err) {
-    outputEl.textContent = `Error: ${err}`
+    outputEl.textContent = `Runtime error: ${err}`
     outputEl.className = 'error'
   } finally {
     runBtn.disabled = false

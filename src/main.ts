@@ -397,7 +397,7 @@ editor.onDidChangeModelContent(() => {
 // ---------------------------------------------------------------------------
 
 // Tabs that participate in bidirectional cursor sync.
-const SYNC_TABS = new Set(['fink-tokens', 'fink-ast', 'fink-cps', 'fink-cps-lifted'])
+const SYNC_TABS = new Set(['fink-tokens', 'fink-ast', 'fink-cps', 'fink-cps-lifted', 'fink-wat'])
 
 // Currently active tab id — used to gate cursor sync.
 let activeTab = 'fink-run-panel'
@@ -407,6 +407,7 @@ function clearAllDecorations(): void {
   astPanel?.clearEditorHighlight()
   cpsPanel?.clearAll()
   cpsPanelLifted?.clearAll()
+  watPanel?.clearHighlight()
 }
 
 // Tab switching
@@ -434,6 +435,7 @@ for (const tab of document.querySelectorAll<HTMLElement>('.fink-tab')) {
         if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
         if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
         if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
+        if (activeTab === 'fink-wat') watPanel?.syncFromSource(line, col)
       }
     }
   })
@@ -483,6 +485,7 @@ editor.onDidFocusEditorText(() => {
   if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
   if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
   if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
+  if (activeTab === 'fink-wat') watPanel?.syncFromSource(line, col)
 })
 
 editor.onDidChangeCursorPosition(e => {
@@ -494,6 +497,7 @@ editor.onDidChangeCursorPosition(e => {
   if (activeTab === 'fink-ast') astPanel?.highlightAtPosition(line, col)
   if (activeTab === 'fink-cps') cpsPanel?.syncFromSource(line, col)
   if (activeTab === 'fink-cps-lifted') cpsPanelLifted?.syncFromSource(line, col)
+  if (activeTab === 'fink-wat') watPanel?.syncFromSource(line, col)
 })
 
 // ---------------------------------------------------------------------------

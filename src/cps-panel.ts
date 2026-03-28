@@ -53,8 +53,10 @@ function decodeMappings(mappingsStr: string): Mapping[] {
     for (const seg of line.split(',')) {
       if (!seg) continue
       const fields = vlqDecode(seg)
-      if (fields.length < 4) continue
+      if (fields.length === 0) continue
       prevCpsCol += fields[0]
+      // 1-field segment = unmapped stop marker — advance col but emit no mapping
+      if (fields.length < 4) continue
       // fields[1] = source index delta (always 0)
       prevSrcLine += fields[2]
       prevSrcCol  += fields[3]
@@ -95,8 +97,27 @@ function lookupCpsToSrc(lookup: PosMap, cpsLine: number, cpsCol: number): Mappin
 }
 
 // Find the first CPS position that maps from (srcLine, srcCol).
+// Falls back to the last mapping on the same line with srcCol <= cursor,
+// then the nearest mapped line.
 function lookupSrcToCps(lookup: PosMap, srcLine: number, srcCol: number): Mapping | null {
-  return lookup.srcToFirst.get(srcLine * 100000 + srcCol) ?? null
+  const exact = lookup.srcToFirst.get(srcLine * 100000 + srcCol)
+  if (exact) return exact
+
+  // Closest col on the same line
+  let best: Mapping | null = null
+  for (const m of lookup.cpsToSrc) {
+    if (m.srcLine > srcLine) break
+    if (m.srcLine === srcLine && m.srcCol <= srcCol) {
+      if (!best || m.srcCol > best.srcCol) best = m
+    }
+  }
+  if (best) return best
+
+  // Nearest line — last mapping before srcLine
+  for (let i = lookup.cpsToSrc.length - 1; i >= 0; i--) {
+    if (lookup.cpsToSrc[i].srcLine <= srcLine) return lookup.cpsToSrc[i]
+  }
+  return null
 }
 
 // Find the token that contains (line, col) — cursor can be anywhere inside it.
@@ -129,7 +150,6 @@ export class CpsPanel {
   private srcHighlightDeco: monaco.editor.IEditorDecorationsCollection
   onWillHighlightSrc: (() => void) | null = null
   onActivate: (() => void) | null = null
-  private pendingTokens: { tokens: LexToken[]; code: string } | null = null
   private lastSemanticTokens: Uint32Array = new Uint32Array(0)
   private cpsTokens: LexToken[] = []
   private srcTokens: LexToken[] = []
@@ -172,19 +192,10 @@ export class CpsPanel {
     this.highlightDeco = this.cpsEditor.createDecorationsCollection([])
     this.srcHighlightDeco = this.srcEditor.createDecorationsCollection([])
 
-    // After setValue() fires, push pending tokens into the tokenizer.
-    // Pass -1 to force unconditional update; the version change in the state
-    // already causes Monaco to re-tokenize all lines from scratch.
-    this.cpsEditor.getModel()!.onDidChangeContent(() => {
-      if (!this.pendingTokens) return
-      const model = this.cpsEditor.getModel()!
-      this.tokenizer.update(this.pendingTokens.tokens, -1, this.pendingTokens.code)
-      this.pendingTokens = null
-    })
-
     // CPS cursor → highlight source
     this.cpsEditor.onDidChangeCursorPosition(e => {
       if (this.syncingFromSrc) return
+      this.highlightDeco.set([])
       this.onActivate?.()
       if (!this.lookup) return
       const cpsLine = e.position.lineNumber - 1
@@ -246,9 +257,6 @@ export class CpsPanel {
 
     const model = this.cpsEditor.getModel()
     if (model) {
-      // Lex the CPS code and stash the tokens — the model's onDidChangeContent
-      // handler (set up in the constructor) will push them into the tokenizer
-      // with the correct post-setValue version number.
       if (ParsedDocument && code) {
         const cpsDoc = new ParsedDocument(code)
         const highlightJson = cpsDoc.get_highlight_tokens()
@@ -256,11 +264,13 @@ export class CpsPanel {
         cpsDoc.free()
         const tokens: LexToken[] = JSON.parse(highlightJson)
         this.cpsTokens = tokens
-        this.pendingTokens = { tokens, code }
+        // Update the tokenizer cache before setValue so Monaco's re-tokenize
+        // pass sees the new tokens immediately, not on the next edit.
+        this.tokenizer.update(tokens, -1, code)
       } else {
-        this.pendingTokens = null
         this.lastSemanticTokens = new Uint32Array(0)
         this.cpsTokens = []
+        this.tokenizer.update([], -1, '')
       }
       model.setValue(code)
     }

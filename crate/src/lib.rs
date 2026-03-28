@@ -4,11 +4,13 @@ use wasm_bindgen::prelude::*;
 use fink::ast::{self, Node, NodeKind};
 use fink::lexer::{self, TokenKind};
 use fink::parser;
-use fink::passes::closure_lifting::lift_all;
 use fink::passes::cps::fmt as cps_fmt;
 use fink::passes::cps::ir::CpsId;
-use fink::passes::cps::transform::lower_expr;
+use fink::passes::cps::transform::lower_module;
+use fink::passes::lifting::lift;
 use fink::passes::name_res::{self, Resolution};
+use fink::passes::partial;
+use fink::passes::scopes;
 
 // ---------------------------------------------------------------------------
 // String literal sub-parsing: split StrText into text + escape segments
@@ -477,6 +479,7 @@ fn collect_tokens<'src>(node: &'src Node<'src>, tokens: &mut Vec<RawToken>) {
         | NodeKind::LitStr { .. }
         | NodeKind::Partial
         | NodeKind::Wildcard
+        | NodeKind::SynthIdent(_)
         | NodeKind::Spread { inner: None, .. } => {}
     }
 }
@@ -600,6 +603,7 @@ fn node_kind_label<'a>(node: &'a ast::Node<'a>) -> (&'static str, String) {
         Yield(_)           => ("Yield",       String::new()),
         Block { sep, .. }  => ("Block",       sep.src.to_string()),
         Module(_)          => ("Module",      String::new()),
+        SynthIdent(n)      => ("SynthIdent",  format!("·$_{n}")),
     }
 }
 
@@ -610,7 +614,7 @@ fn serialize_children(node: &ast::Node) -> String {
 
     match &node.kind {
         LitBool(_) | LitInt(_) | LitFloat(_) | LitDecimal(_) | LitStr { .. }
-        | Ident(_) | Partial | Wildcard => {}
+        | Ident(_) | Partial | Wildcard | SynthIdent(_) => {}
 
         LitSeq { items, .. } | LitRec { items, .. } | Pipe(items) | Patterns(items)
         | Module(items) => {
@@ -669,40 +673,36 @@ fn serialize_children(node: &ast::Node) -> String {
 // ---------------------------------------------------------------------------
 
 /// Compile Fink source to a WASM binary.
-/// Returns the raw bytes on success, or throws a JS error on failure.
+/// Currently unimplemented — WASM codegen is being reworked in fink v0.4.0.
 #[wasm_bindgen]
-pub fn compile(src: &str) -> Result<Vec<u8>, JsValue> {
-    use fink::ast::build_index;
-    use fink::parser::parse;
-    use fink::passes::closure_lifting::lift_all;
-    use fink::passes::cps::transform::lower_expr;
-    use fink::passes::wasm::codegen::codegen;
-
-    let r = parse(src).map_err(|e| JsValue::from_str(&e.message))?;
-    let ast_index = build_index(&r);
-    let cps = lower_expr(&r.root);
-    let (lifted, resolved) = lift_all(cps, &ast_index);
-    let result = codegen(&lifted, &resolved, &ast_index);
-    Ok(result.wasm)
+pub fn compile(_src: &str) -> Result<Vec<u8>, JsValue> {
+    Err(JsValue::from_str("WASM compilation not yet supported in this version"))
 }
 
-/// Compile Fink source and return the WAT text disassembly.
+/// Compile Fink source and return the WAT text with inline source map.
 /// Returns the WAT string on success, or throws a JS error on failure.
 #[wasm_bindgen]
 pub fn compile_wat(src: &str) -> Result<String, JsValue> {
     use fink::ast::build_index;
+    use fink::ast::NodeKind;
     use fink::parser::parse;
-    use fink::passes::closure_lifting::lift_all;
-    use fink::passes::cps::transform::lower_expr;
-    use fink::passes::wasm::codegen::codegen;
+    use fink::passes::wat::writer;
 
     let r = parse(src).map_err(|e| JsValue::from_str(&e.message))?;
+    let (root, node_count) = partial::apply(r.root, r.node_count)
+        .map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+    let r = fink::ast::ParseResult { root, node_count };
     let ast_index = build_index(&r);
-    let cps = lower_expr(&r.root);
-    let (lifted, resolved) = lift_all(cps, &ast_index);
-    let result = codegen(&lifted, &resolved, &ast_index);
-    wasmprinter::print_bytes(&result.wasm)
-        .map_err(|e| JsValue::from_str(&format!("{e}")))
+    let scope = scopes::analyse(&r.root, r.node_count as usize, &[]);
+    let exprs = match &r.root.kind {
+        NodeKind::Module(items) => &items.items,
+        _ => return Err(JsValue::from_str("expected module")),
+    };
+    let cps = lower_module(exprs, &scope);
+    let lifted = lift(cps, &ast_index);
+    let (wat, srcmap) = writer::emit_mapped_with_content(&lifted, &ast_index, "input.fnk", src);
+    let srcmap_b64 = fink::sourcemap::base64_encode(srcmap.to_json().as_bytes());
+    Ok(format!("{}\n//# sourceMappingURL=data:application/json;base64,{srcmap_b64}", wat.trim()))
 }
 
 // ---------------------------------------------------------------------------
@@ -867,8 +867,18 @@ impl ParsedDocument {
             Err(_) => return,
         };
 
+        let (root, node_count) = match partial::apply(parse_result.root, parse_result.node_count) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let parse_result = ast::ParseResult { root, node_count };
         let ast_index = ast::build_index(&parse_result);
-        let cps = lower_expr(&parse_result.root);
+        let scope = scopes::analyse(&parse_result.root, parse_result.node_count as usize, &[]);
+        let exprs = match &parse_result.root.kind {
+            NodeKind::Module(items) => &items.items,
+            _ => return,
+        };
+        let cps = lower_module(exprs, &scope);
         let node_count = cps.origin.len();
         let resolved = name_res::resolve(&cps.root, &cps.origin, &ast_index, node_count, &cps.synth_alias);
 
@@ -1084,8 +1094,18 @@ impl ParsedDocument {
             Ok(r) => r,
             Err(_) => return r#"{"code":"","map":""}"#.to_string(),
         };
+        let (root, node_count) = match partial::apply(r.root, r.node_count) {
+            Ok(r) => r,
+            Err(_) => return r#"{"code":"","map":""}"#.to_string(),
+        };
+        let r = ast::ParseResult { root, node_count };
         let ast_index = ast::build_index(&r);
-        let cps = lower_expr(&r.root);
+        let scope = scopes::analyse(&r.root, r.node_count as usize, &[]);
+        let exprs = match &r.root.kind {
+            NodeKind::Module(items) => &items.items,
+            _ => return r#"{"code":"","map":""}"#.to_string(),
+        };
+        let cps = lower_module(exprs, &scope);
         let ctx = cps_fmt::Ctx { origin: &cps.origin, ast_index: &ast_index, captures: None };
         let (code, map) = cps_fmt::fmt_with_mapped(&cps.root, &ctx, "input.fnk");
         let map_json = map.to_json();
@@ -1095,17 +1115,26 @@ impl ParsedDocument {
     }
 
     /// Return lifted CPS output as JSON: `{"code": "...", "map": "..."}`.
-    /// Runs the full pipeline: parse → CPS → cont_lifting + closure_lifting (lift_all)
-    /// → format with sourcemap.
+    /// Runs the full pipeline: parse → scopes → CPS → lift → format with sourcemap.
     /// Returns `{"code":"","map":""}` if the source fails to parse.
     pub fn get_cps_lifted(&self) -> String {
         let r = match parser::parse(&self.src) {
             Ok(r) => r,
             Err(_) => return r#"{"code":"","map":""}"#.to_string(),
         };
+        let (root, node_count) = match partial::apply(r.root, r.node_count) {
+            Ok(r) => r,
+            Err(_) => return r#"{"code":"","map":""}"#.to_string(),
+        };
+        let r = ast::ParseResult { root, node_count };
         let ast_index = ast::build_index(&r);
-        let cps = lower_expr(&r.root);
-        let (lifted, _) = lift_all(cps, &ast_index);
+        let scope = scopes::analyse(&r.root, r.node_count as usize, &[]);
+        let exprs = match &r.root.kind {
+            NodeKind::Module(items) => &items.items,
+            _ => return r#"{"code":"","map":""}"#.to_string(),
+        };
+        let cps = lower_module(exprs, &scope);
+        let lifted = lift(cps, &ast_index);
         let ctx = cps_fmt::Ctx { origin: &lifted.origin, ast_index: &ast_index, captures: None };
         let (code, map) = cps_fmt::fmt_with_mapped(&lifted.root, &ctx, "input.fnk");
         let map_json = map.to_json();
@@ -1132,6 +1161,7 @@ impl ParsedDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
     #[test]
     fn no_escapes() {

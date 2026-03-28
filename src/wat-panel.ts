@@ -1,12 +1,122 @@
 // WAT panel — read-only Monaco editor showing the WAT disassembly of compiled Fink source.
 //
-// No cursor sync for now — sourcemap integration is deferred.
-// Updated live on every reparse via update(wat).
+// Cursor sync via the inline sourceMappingURL comment appended by compile_wat():
+//   source editor position → sourcemap lookup → WAT editor position
 //
+// The sourcemap is stripped from the displayed WAT text and parsed for sync.
 // Syntax highlighting: hand-written Monarch tokenizer (no onigasm / TextMate deps).
 // Covers the WAT subset emitted by fink codegen plus the full WAT MVP spec.
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
+
+// ---------------------------------------------------------------------------
+// VLQ / Source Map v3 decoder (same as cps-panel.ts)
+// ---------------------------------------------------------------------------
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function vlqDecode(str: string): number[] {
+  const values: number[] = []
+  let i = 0
+  while (i < str.length) {
+    let shift = 0, value = 0, cont = true
+    while (cont) {
+      const digit = B64.indexOf(str[i++])
+      cont = (digit & 0x20) !== 0
+      value |= (digit & 0x1f) << shift
+      shift += 5
+    }
+    values.push(value & 1 ? -(value >> 1) : value >> 1)
+  }
+  return values
+}
+
+interface Mapping { watLine: number; watCol: number; srcLine: number; srcCol: number }
+
+function decodeMappings(mappingsStr: string): Mapping[] {
+  const result: Mapping[] = []
+  let prevSrcLine = 0, prevSrcCol = 0
+  const lines = mappingsStr.split(';')
+  for (let watLine = 0; watLine < lines.length; watLine++) {
+    const line = lines[watLine]
+    if (!line) continue
+    let prevWatCol = 0
+    for (const seg of line.split(',')) {
+      if (!seg) continue
+      const fields = vlqDecode(seg)
+      if (fields.length === 0) continue
+      prevWatCol += fields[0]
+      // 1-field segment = unmapped stop marker — advance col but emit no mapping
+      if (fields.length < 4) continue
+      prevSrcLine  += fields[2]
+      prevSrcCol   += fields[3]
+      result.push({ watLine, watCol: prevWatCol, srcLine: prevSrcLine, srcCol: prevSrcCol })
+    }
+  }
+  return result
+}
+
+interface Lookup {
+  srcToFirst: Map<number, Mapping>  // exact key: srcLine * 100000 + srcCol
+  byLine: Map<number, Mapping[]>    // srcLine → all mappings on that line, sorted by srcCol
+}
+
+function buildLookup(mappings: Mapping[]): Lookup {
+  const srcToFirst = new Map<number, Mapping>()
+  const byLine = new Map<number, Mapping[]>()
+  for (const m of mappings) {
+    const key = m.srcLine * 100000 + m.srcCol
+    if (!srcToFirst.has(key)) srcToFirst.set(key, m)
+    if (!byLine.has(m.srcLine)) byLine.set(m.srcLine, [])
+    byLine.get(m.srcLine)!.push(m)
+  }
+  for (const arr of byLine.values()) arr.sort((a, b) => a.srcCol - b.srcCol)
+  return { srcToFirst, byLine }
+}
+
+// Find the best mapping for (srcLine, srcCol): exact match first, then
+// closest col on the same line, then nearest line.
+function lookupSrcToWat(lookup: Lookup, srcLine: number, srcCol: number): Mapping | null {
+  const exact = lookup.srcToFirst.get(srcLine * 100000 + srcCol)
+  if (exact) return exact
+
+  // Closest col on the same line (last mapping with srcCol <= cursor)
+  const lineArr = lookup.byLine.get(srcLine)
+  if (lineArr && lineArr.length > 0) {
+    let best = lineArr[0]
+    for (const m of lineArr) {
+      if (m.srcCol <= srcCol) best = m
+      else break
+    }
+    return best
+  }
+
+  // Nearest line — find closest srcLine
+  let bestLine: number | null = null
+  for (const line of lookup.byLine.keys()) {
+    if (bestLine === null || Math.abs(line - srcLine) < Math.abs(bestLine - srcLine)) bestLine = line
+  }
+  if (bestLine === null) return null
+  return lookup.byLine.get(bestLine)![0]
+}
+
+// ---------------------------------------------------------------------------
+// Inline sourceMappingURL parser
+// ---------------------------------------------------------------------------
+
+function parseInlineSourcemap(wat: string): { code: string; mappings: string } | null {
+  const marker = '//# sourceMappingURL=data:application/json;base64,'
+  const idx = wat.lastIndexOf(marker)
+  if (idx === -1) return null
+  const code = wat.slice(0, idx).trimEnd()
+  const b64 = wat.slice(idx + marker.length).trim()
+  try {
+    const json = atob(b64)
+    const obj = JSON.parse(json) as { mappings?: string }
+    if (typeof obj.mappings !== 'string') return null
+    return { code, mappings: obj.mappings }
+  } catch { return null }
+}
 
 // Register language + tokenizer once.
 monaco.languages.register({ id: 'wat' })
@@ -125,6 +235,8 @@ monaco.languages.setLanguageConfiguration('wat', {
 
 export class WatPanel {
   private editor: monaco.editor.IStandaloneCodeEditor
+  private lookup: Lookup | null = null
+  private highlightDeco: monaco.editor.IEditorDecorationsCollection
 
   constructor(container: HTMLElement) {
     this.editor = monaco.editor.create(container, {
@@ -141,10 +253,35 @@ export class WatPanel {
       accessibilitySupport: 'off',
       automaticLayout: true,
     })
+    this.highlightDeco = this.editor.createDecorationsCollection([])
   }
 
   update(wat: string): void {
-    this.editor.getModel()?.setValue(wat)
+    const parsed = parseInlineSourcemap(wat)
+    if (parsed) {
+      this.editor.getModel()?.setValue(parsed.code)
+      this.lookup = buildLookup(decodeMappings(parsed.mappings))
+    } else {
+      this.editor.getModel()?.setValue(wat)
+      this.lookup = null
+    }
+    this.highlightDeco.set([])
+  }
+
+  // Highlight the WAT position corresponding to the given source (line, col) — 0-based.
+  syncFromSource(srcLine: number, srcCol: number): void {
+    if (!this.lookup) return
+    const m = lookupSrcToWat(this.lookup, srcLine, srcCol)
+    if (!m) return
+    this.highlightDeco.set([{
+      range: new monaco.Range(m.watLine + 1, m.watCol + 1, m.watLine + 1, m.watCol + 1),
+      options: { className: 'fink-token-highlight', isWholeLine: true },
+    }])
+    this.editor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.watLine + 1, column: m.watCol + 1 })
+  }
+
+  clearHighlight(): void {
+    this.highlightDeco.set([])
   }
 
   layout(): void {

@@ -57,21 +57,51 @@ function decodeMappings(mappingsStr: string): Mapping[] {
 }
 
 interface Lookup {
-  srcToFirst: Map<number, Mapping>  // exact key: srcLine * 100000 + srcCol
-  byLine: Map<number, Mapping[]>    // srcLine → all mappings on that line, sorted by srcCol
+  srcToFirst: Map<number, Mapping>   // exact key: srcLine * 100000 + srcCol
+  byLine: Map<number, Mapping[]>     // srcLine → all mappings on that line, sorted by srcCol
+  byWatLine: Map<number, number[]>   // watLine → sorted list of watCol values with mappings
 }
 
 function buildLookup(mappings: Mapping[]): Lookup {
   const srcToFirst = new Map<number, Mapping>()
   const byLine = new Map<number, Mapping[]>()
+  const byWatLine = new Map<number, number[]>()
   for (const m of mappings) {
     const key = m.srcLine * 100000 + m.srcCol
     if (!srcToFirst.has(key)) srcToFirst.set(key, m)
     if (!byLine.has(m.srcLine)) byLine.set(m.srcLine, [])
     byLine.get(m.srcLine)!.push(m)
+    if (!byWatLine.has(m.watLine)) byWatLine.set(m.watLine, [])
+    byWatLine.get(m.watLine)!.push(m.watCol)
   }
   for (const arr of byLine.values()) arr.sort((a, b) => a.srcCol - b.srcCol)
-  return { srcToFirst, byLine }
+  for (const arr of byWatLine.values()) arr.sort((a, b) => a - b)
+  return { srcToFirst, byLine, byWatLine }
+}
+
+// Return the start column of the next mapping on the same WAT line after watCol,
+// or null if there is none.
+function nextWatCol(lookup: Lookup, watLine: number, watCol: number): number | null {
+  const cols = lookup.byWatLine.get(watLine)
+  if (!cols) return null
+  for (const c of cols) {
+    if (c > watCol) return c
+  }
+  return null
+}
+
+// Return the column just past the end of the s-expression starting at (line, col)
+// in the model — finds the closing ')' by counting paren depth.
+// Falls back to null if the model is unavailable or col doesn't start with '('.
+function sExprEnd(model: monaco.editor.ITextModel, line: number, col: number): number | null {
+  const text = model.getLineContent(line + 1)
+  if (col >= text.length || text[col] !== '(') return null
+  let depth = 0
+  for (let i = col; i < text.length; i++) {
+    if (text[i] === '(') depth++
+    else if (text[i] === ')') { depth--; if (depth === 0) return i + 1 }
+  }
+  return null
 }
 
 // Find the best mapping for (srcLine, srcCol): exact match first, then
@@ -273,9 +303,13 @@ export class WatPanel {
     if (!this.lookup) return
     const m = lookupSrcToWat(this.lookup, srcLine, srcCol)
     if (!m) return
+    const model = this.editor.getModel()
+    const sExprEndCol = model ? sExprEnd(model, m.watLine, m.watCol) : null
+    const next = nextWatCol(this.lookup, m.watLine, m.watCol)
+    const endCol = sExprEndCol ?? next ?? (model ? model.getLineMaxColumn(m.watLine + 1) - 1 : m.watCol + 1)
     this.highlightDeco.set([{
-      range: new monaco.Range(m.watLine + 1, m.watCol + 1, m.watLine + 1, m.watCol + 1),
-      options: { className: 'fink-token-highlight', isWholeLine: true },
+      range: new monaco.Range(m.watLine + 1, m.watCol + 1, m.watLine + 1, endCol + 1),
+      options: { className: 'fink-token-highlight', isWholeLine: false },
     }])
     this.editor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.watLine + 1, column: m.watCol + 1 })
   }

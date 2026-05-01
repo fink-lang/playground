@@ -1,124 +1,20 @@
 // CPS panel — read-only Monaco editor showing CPS-transformed Fink source.
 //
-// Bidirectional cursor sync via the Source Map v3 emitted by get_cps():
+// Bidirectional cursor sync via the native sourcemap emitted by get_cps():
 //   source editor position → sourcemap lookup → CPS editor position
 //   CPS editor position    → sourcemap lookup → source editor position
 //
-// The sourcemap maps CPS output positions back to original source positions.
-// We decode the VLQ mappings once per reparse and build two lookup tables:
-//   cpsToSrc[cps_line][cps_col] → { srcLine, srcCol }
-//   srcToFirst[src_line][src_col] → { cpsLine, cpsCol }  (first mapping for each src pos)
+// The sourcemap is a flat array of { out, srcStart, srcEnd } byte-offset
+// triples (see ./native-sourcemap.ts). It is decoded once per reparse into
+// a `Lookup` that supports lookups in either direction.
 
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
-
-// ---------------------------------------------------------------------------
-// VLQ / Source Map v3 decoder
-// ---------------------------------------------------------------------------
-
-const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
-function vlqDecode(str: string): number[] {
-  const values: number[] = []
-  let i = 0
-  while (i < str.length) {
-    let shift = 0, value = 0, cont = true
-    while (cont) {
-      const digit = B64.indexOf(str[i++])
-      cont = (digit & 0x20) !== 0
-      value |= (digit & 0x1f) << shift
-      shift += 5
-    }
-    values.push(value & 1 ? -(value >> 1) : value >> 1)
-  }
-  return values
-}
-
-interface Mapping {
-  cpsLine: number
-  cpsCol: number
-  srcLine: number
-  srcCol: number
-}
-
-function decodeMappings(mappingsStr: string): Mapping[] {
-  const result: Mapping[] = []
-  let prevSrcLine = 0, prevSrcCol = 0
-  const lines = mappingsStr.split(';')
-  for (let cpsLine = 0; cpsLine < lines.length; cpsLine++) {
-    const line = lines[cpsLine]
-    if (!line) continue
-    let prevCpsCol = 0
-    for (const seg of line.split(',')) {
-      if (!seg) continue
-      const fields = vlqDecode(seg)
-      if (fields.length === 0) continue
-      prevCpsCol += fields[0]
-      // 1-field segment = unmapped stop marker — advance col but emit no mapping
-      if (fields.length < 4) continue
-      // fields[1] = source index delta (always 0)
-      prevSrcLine += fields[2]
-      prevSrcCol  += fields[3]
-      result.push({ cpsLine, cpsCol: prevCpsCol, srcLine: prevSrcLine, srcCol: prevSrcCol })
-    }
-  }
-  return result
-}
-
-// ---------------------------------------------------------------------------
-// Lookup tables built from mappings
-// ---------------------------------------------------------------------------
-
-interface PosMap {
-  // cpsToSrc: for a given CPS (line, col), the nearest src position
-  cpsToSrc: Mapping[]
-  // srcToFirst: for a given src (line, col), the first CPS position
-  srcToFirst: Map<number, Mapping>  // key = srcLine * 100000 + srcCol
-}
-
-function buildLookup(mappings: Mapping[]): PosMap {
-  const srcToFirst = new Map<number, Mapping>()
-  for (const m of mappings) {
-    const key = m.srcLine * 100000 + m.srcCol
-    if (!srcToFirst.has(key)) srcToFirst.set(key, m)
-  }
-  return { cpsToSrc: mappings, srcToFirst }
-}
-
-// Find the CPS mapping closest to (cpsLine, cpsCol) — last mapping on or before the position.
-function lookupCpsToSrc(lookup: PosMap, cpsLine: number, cpsCol: number): Mapping | null {
-  let best: Mapping | null = null
-  for (const m of lookup.cpsToSrc) {
-    if (m.cpsLine > cpsLine) break
-    if (m.cpsLine < cpsLine || m.cpsCol <= cpsCol) best = m
-  }
-  return best
-}
-
-// Find the first CPS position that maps from (srcLine, srcCol).
-// Falls back to the last mapping on the same line with srcCol <= cursor,
-// then the nearest mapped line.
-function lookupSrcToCps(lookup: PosMap, srcLine: number, srcCol: number): Mapping | null {
-  const exact = lookup.srcToFirst.get(srcLine * 100000 + srcCol)
-  if (exact) return exact
-
-  // Closest col on the same line
-  let best: Mapping | null = null
-  for (const m of lookup.cpsToSrc) {
-    if (m.srcLine > srcLine) break
-    if (m.srcLine === srcLine && m.srcCol <= srcCol) {
-      if (!best || m.srcCol > best.srcCol) best = m
-    }
-  }
-  if (best) return best
-
-  // Nearest line — last mapping before srcLine
-  for (let i = lookup.cpsToSrc.length - 1; i >= 0; i--) {
-    if (lookup.cpsToSrc[i].srcLine <= srcLine) return lookup.cpsToSrc[i]
-  }
-  return null
-}
+import {
+  buildLookup, decodeNativeSourcemap, lookupGenToSrc, lookupSrcToGen,
+  type Lookup, type RawMapping,
+} from './native-sourcemap.js'
 
 // Find the token that contains (line, col) — cursor can be anywhere inside it.
 function tokenAtPos(tokens: LexToken[], line: number, col: number): LexToken | null {
@@ -143,7 +39,7 @@ const TOKEN_MODIFIERS = ['readonly']
 export class CpsPanel {
   private cpsEditor: monaco.editor.IStandaloneCodeEditor
   private tokenizer: FinkTokenizer
-  private lookup: PosMap | null = null
+  private lookup: Lookup | null = null
   private syncingFromCps = false
   private syncingFromSrc = false
   private highlightDeco: monaco.editor.IEditorDecorationsCollection
@@ -201,7 +97,7 @@ export class CpsPanel {
       const cpsLine = e.position.lineNumber - 1
       const cpsCol  = e.position.column - 1
       const cpsTok  = tokenAtPos(this.cpsTokens, cpsLine, cpsCol)
-      const m = lookupCpsToSrc(this.lookup, cpsLine, cpsTok ? cpsTok.col : cpsCol)
+      const m = lookupGenToSrc(this.lookup, cpsLine, cpsTok ? cpsTok.col : cpsCol)
       if (!m) { this.srcHighlightDeco.set([]); return }
       this.onWillHighlightSrc?.()
       this.syncingFromCps = true
@@ -222,33 +118,33 @@ export class CpsPanel {
     this.highlightDeco.set([])
     if (!this.lookup) return
     const srcTok = tokenAtPos(this.srcTokens, srcLine, srcCol)
-    const m = lookupSrcToCps(this.lookup, srcLine, srcTok ? srcTok.col : srcCol)
+    const m = lookupSrcToGen(this.lookup, srcLine, srcTok ? srcTok.col : srcCol)
     if (!m) { this.highlightDeco.set([]); return }
     this.syncingFromSrc = true
-    const cpsTok = tokenAtPos(this.cpsTokens, m.cpsLine, m.cpsCol)
-    const cpsEnd = cpsTok ? cpsTok.endCol : m.cpsCol + 1
+    const cpsTok = tokenAtPos(this.cpsTokens, m.genLine, m.genCol)
+    const cpsEnd = cpsTok ? cpsTok.endCol : m.genCol + 1
     this.highlightDeco.set([{
-      range: new monaco.Range(m.cpsLine + 1, m.cpsCol + 1, m.cpsLine + 1, cpsEnd + 1),
+      range: new monaco.Range(m.genLine + 1, m.genCol + 1, m.genLine + 1, cpsEnd + 1),
       options: { className: 'fink-token-highlight', isWholeLine: false },
     }])
-    this.cpsEditor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.cpsLine + 1, column: m.cpsCol + 1 })
+    this.cpsEditor.revealPositionInCenterIfOutsideViewport({ lineNumber: m.genLine + 1, column: m.genCol + 1 })
     this.syncingFromSrc = false
   }
 
-  // Called from main.ts after each reparse with the get_cps() JSON result and
-  // the ParsedDocument constructor (to lex the CPS code for highlighting).
+  // Called from main.ts after each reparse with the get_cps() JSON result, the
+  // source text (for sourcemap line/col conversion), and the ParsedDocument
+  // constructor (to lex the CPS code for highlighting).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  update(cpsJson: string, ParsedDocument: any): void {
+  update(cpsJson: string, src: string, ParsedDocument: any): void {
     let code = ''
     if (!cpsJson) {
       // CPS transform crashed — show error in the editor
       code = '---\nOops! You found a bug in the CPS transform.\nThe ƒink compiler is still in early stages of development — this will be fixed soon.\nFeel free to open a ticket: github.com/fink-lang/fink/issues\n---'
       this.lookup = null
     } else try {
-      const parsed = JSON.parse(cpsJson) as { code: string; map: string }
+      const parsed = JSON.parse(cpsJson) as { code: string; map: RawMapping[] }
       code = parsed.code
-      const mapObj = JSON.parse(parsed.map) as { mappings: string }
-      const mappings = decodeMappings(mapObj.mappings)
+      const mappings = decodeNativeSourcemap(parsed.map, code, src)
       this.lookup = buildLookup(mappings)
 
     } catch {

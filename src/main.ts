@@ -7,7 +7,8 @@
 // playground WASM crate loaded via dynamic import at runtime.
 //
 // Code execution: compile(src) → WASM binary via the playground crate's
-// compile() export, then run in a sandboxed WASI iframe (wasi-shim.ts).
+// compile() export, then instantiate in-page with no-op host imports
+// (runner.ts). Tier 1: pure compute only — no stdout/stderr capture yet.
 
 // MonacoEnvironment must be set before the editor creates its workers.
 ;(window as any).MonacoEnvironment = {
@@ -35,7 +36,7 @@ import 'monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js' 
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/goToCommands.js'           // go-to-definition (F12 / Cmd+click)
 import 'monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/link/goToDefinitionAtPosition.js' // Ctrl/Cmd+click inline
 import { compile, compileWat, setCompileModule } from './compiler.js'
-import { run } from './wasi-shim.js'
+import { run } from './runner.js'
 import { FinkTokenizer, type LexToken } from './tokenizer.js'
 import { TokensPanel } from './tokens-panel.js'
 import { AstPanel } from './ast-panel.js'
@@ -126,13 +127,13 @@ function _reparse(src: string, _modelVersion: number): void {
   const rawTokens: LexToken[] = JSON.parse(rawTokensJson)
   tokensPanel?.update(rawTokens)
   astPanel?.update(astJson, lastDiagnostics)
-  cpsPanel?.update(cpsJson, ParsedDocument)
+  cpsPanel?.update(cpsJson, src, ParsedDocument)
   cpsPanel?.updateSrcTokens(highlightTokens)
-  cpsPanelLifted?.update(cpsLiftedJson, ParsedDocument)
+  cpsPanelLifted?.update(cpsLiftedJson, src, ParsedDocument)
   cpsPanelLifted?.updateSrcTokens(highlightTokens)
   try {
     const wat = compileWat(src)
-    if (wat !== null) watPanel?.update(wat)
+    if (wat !== null) watPanel?.update(wat, src)
   } catch (e) {
     console.warn('[fink] WAT compilation failed:', e)
   }
@@ -528,9 +529,11 @@ runBtn.addEventListener('click', async () => {
       return
     }
     const result = await run(wasm)
-    const text = result.stdout + result.stderr
-    outputEl.textContent = text || '(no output)'
-    outputEl.className = result.exitCode === 0 ? 'ok' : 'error'
+    const time = `(${result.durationMs.toFixed(1)} ms)`
+    outputEl.textContent = result.ok
+      ? `OK — ${result.message} ${time}\n\n(stdout/stderr capture coming once interop/js.wat lands upstream)`
+      : `${result.status}: ${result.message} ${time}`
+    outputEl.className = result.ok ? 'ok' : 'error'
   } catch (err) {
     outputEl.textContent = `Runtime error: ${err}`
     outputEl.className = 'error'

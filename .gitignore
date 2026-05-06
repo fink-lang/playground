@@ -5,8 +5,10 @@ dist/
 target/
 .DS_Store
 
+# Vendored at build time from the linked fink source (see build.mjs step 0a).
+src/fink.js
+
 # Claude local config
-.claude/settings.local.json
-.claude.local/
+.claude
 
 /.brain/

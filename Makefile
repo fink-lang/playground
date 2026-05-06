@@ -15,7 +15,7 @@ deps-install:
 	node deps.mjs install
 
 clean:
-	rm -rf build crate/pkg
+	rm -rf build crate/pkg src/fink.js
 
 build:
 	NODE_ENV=production node build.mjs

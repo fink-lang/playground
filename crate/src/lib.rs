@@ -334,6 +334,10 @@ fn collect_tokens(ast: &Ast<'_>, id: AstId, tokens: &mut Vec<RawToken>) {
             collect_tokens(ast, *operand, tokens);
         }
 
+        NodeKind::PostfixOp { lhs, .. } => {
+            collect_tokens(ast, *lhs, tokens);
+        }
+
         NodeKind::Group { inner, .. } => {
             collect_tokens(ast, *inner, tokens);
         }
@@ -485,6 +489,7 @@ fn node_kind_label<'a>(node: &'a ast::Node<'a>) -> (&'static str, String) {
         StrRawTempl { .. } => ("StrRawTempl", String::new()),
         Ident(s)           => ("Ident",       s.to_string()),
         UnaryOp { op, .. } => ("UnaryOp",     op.src.to_string()),
+        PostfixOp { op, .. } => ("PostfixOp", op.src.to_string()),
         InfixOp { op, .. } => ("InfixOp",     op.src.to_string()),
         ChainedCmp(_)      => ("ChainedCmp",  String::new()),
         Spread { op, .. }  => ("Spread",      op.src.to_string()),
@@ -528,6 +533,9 @@ fn serialize_children(ast: &Ast<'_>, id: AstId) -> String {
         }
         UnaryOp { operand, .. } | Try(operand) => {
             parts.push(serialize_node(ast, *operand));
+        }
+        PostfixOp { lhs, .. } => {
+            parts.push(serialize_node(ast, *lhs));
         }
         InfixOp { lhs, rhs, .. }
         | Bind { lhs, rhs, .. }
@@ -607,7 +615,7 @@ fn native_sourcemap_to_json(sm: &NativeSourceMap) -> String {
 /// Throws a JS error with the diagnostic message on compilation failure.
 #[wasm_bindgen]
 pub fn compile(src: &str) -> Result<Vec<u8>, JsValue> {
-    let wasm = fink::to_wasm(src, "playground.fnk")
+    let wasm = fink::to_wasm_for(src, "playground.fnk", fink::passes::wasm::emit::Interop::Js)
         .map_err(|e| JsValue::from_str(&e))?;
     Ok(wasm.binary)
 }

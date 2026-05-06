@@ -516,6 +516,7 @@ runBtn.addEventListener('click', async () => {
   try {
     const src = editor.getValue()
     let wasm: Uint8Array | null
+    const tCompile = performance.now()
     try {
       wasm = await compile(src)
     } catch (err) {
@@ -523,16 +524,26 @@ runBtn.addEventListener('click', async () => {
       outputEl.className = 'error'
       return
     }
+    const compileMs = performance.now() - tCompile
     if (!wasm) {
       outputEl.textContent = 'Compiler not available yet.'
       outputEl.className = 'error'
       return
     }
     const result = await run(wasm)
-    const time = `(${result.durationMs.toFixed(1)} ms)`
-    outputEl.textContent = result.ok
-      ? `OK — ${result.message} ${time}\n\n(stdout/stderr capture coming once interop/js.wat lands upstream)`
+    const parts = [
+      `compile ${compileMs.toFixed(1)}ms`,
+      `init ${result.initMs.toFixed(1)}ms`,
+      `import ${result.importMs.toFixed(1)}ms`,
+      result.runMs !== null ? `run ${result.runMs.toFixed(1)}ms` : null,
+    ].filter(Boolean)
+    const time = `(${parts.join(' · ')})`
+    const head = result.ok
+      ? `OK — ${result.message} ${time}`
       : `${result.status}: ${result.message} ${time}`
+    const out = result.stdout.length ? `\n\nstdout:\n${result.stdout.join('')}` : ''
+    const err = result.stderr.length ? `\n\nstderr:\n${result.stderr.join('')}` : ''
+    outputEl.textContent = head + out + err
     outputEl.className = result.ok ? 'ok' : 'error'
   } catch (err) {
     outputEl.textContent = `Runtime error: ${err}`

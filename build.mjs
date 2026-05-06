@@ -37,6 +37,28 @@ execSync('wasm-pack build --target web', { cwd: 'crate', stdio: 'inherit' })
 console.log('  built crate → crate/pkg/')
 
 // ---------------------------------------------------------------------------
+// 0a. Vendor fink.js host shim from the linked fink source.
+//     Resolves the fink package's manifest path via `cargo metadata` and
+//     copies src/runtime/interop/js/fink.js next to src/main.ts so esbuild
+//     can bundle it. Always pulls from the version pinned by Cargo.toml,
+//     no risk of vendored drift.
+// ---------------------------------------------------------------------------
+
+{
+  const meta = JSON.parse(execSync('cargo metadata --format-version 1', {
+    cwd: 'crate',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  }).toString())
+  const finkPkg = meta.packages.find((p) => p.name === 'fink')
+  if (!finkPkg) throw new Error('cargo metadata: fink package not found')
+  const finkRoot = path.dirname(finkPkg.manifest_path)
+  const finkJsSrc = path.join(finkRoot, 'src/runtime/interop/js/fink.js')
+  if (!fs.existsSync(finkJsSrc)) throw new Error(`fink.js not found at ${finkJsSrc}`)
+  fs.copyFileSync(finkJsSrc, 'src/fink.js')
+  console.log(`  vendored fink.js from ${finkRoot}`)
+}
+
+// ---------------------------------------------------------------------------
 // 1. Monaco editor worker (iife — workers don't use ES modules by default)
 // ---------------------------------------------------------------------------
 

@@ -68,6 +68,7 @@ await esbuild.build({
   format: 'iife',
   outfile: `${OUT}/editor.worker.js`,
   minify: true,
+  sourcemap: true,
 })
 console.log('  bundled editor.worker.js')
 
@@ -84,6 +85,7 @@ await esbuild.build({
     '.ttf': 'file',
   },
   minify: prod,
+  sourcemap: true,
 })
 console.log('  bundled playground.js')
 

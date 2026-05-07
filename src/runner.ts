@@ -3,13 +3,11 @@
 // Instantiates a compiled fink module via the upstream JS host shim
 // (src/fink.js) and imports the entry module. stdout/stderr writes from
 // fink are captured via host overrides; the result of the module's last
-// expression — or its `main` export, if present — is surfaced in the
-// run summary.
+// expression is surfaced in the run summary.
 //
-// Timing buckets (all milliseconds, all optional except init+import):
+// Timing buckets (all milliseconds):
 //   initMs   — init_wasm: WASM instantiation + host-shim wiring.
 //   importMs — fink.import('./playground.fnk'): module initialization.
-//   runMs    — main(...) call (omitted if the module has no `main`).
 
 import { init_wasm } from './fink.js'
 
@@ -29,7 +27,6 @@ export async function run(bytes: Uint8Array): Promise<RunResult> {
   const stderr: string[] = []
   let initMs = 0
   let importMs = 0
-  let runMs: number | null = null
 
   try {
     const tInit = performance.now()
@@ -45,14 +42,14 @@ export async function run(bytes: Uint8Array): Promise<RunResult> {
     importMs = performance.now() - tImport
 
     let message = `last = ${formatLastVal(last_val)}`
-    if (mod && typeof (mod as { main?: unknown }).main === 'function') {
-      const main = (mod as { main: (arg: string) => Promise<unknown> }).main
+    let runMs: number | null = null
+    const main = (mod as { main?: unknown } | undefined)?.main
+    if (typeof main === 'function') {
       const tRun = performance.now()
-      const result = await main('playground')
+      const result = await (main as (arg: string) => Promise<unknown>)('playground')
       runMs = performance.now() - tRun
       message = `main → ${formatLastVal(result)}`
     }
-
     return { ok: true, status: 'ok', message, initMs, importMs, runMs, stdout, stderr }
   } catch (e) {
     const msg = (e as Error).message ?? String(e)
@@ -63,7 +60,7 @@ export async function run(bytes: Uint8Array): Promise<RunResult> {
       message: msg,
       initMs,
       importMs,
-      runMs,
+      runMs: null,
       stdout,
       stderr,
     }
@@ -74,5 +71,6 @@ function formatLastVal(v: unknown): string {
   if (v === undefined) return '()'
   if (typeof v === 'string') return JSON.stringify(v)
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
-  return String(v)
+  if (typeof v === 'function') return 'fn'
+  return '<value>'
 }

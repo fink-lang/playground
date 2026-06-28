@@ -11,6 +11,7 @@ import { kindToScope, type LexToken } from './tokenizer.js'
 const scopeToCssVar: Record<string, string> = {
   'variable.other.constant':      '--fink-editor-color-ident',
   'constant.numeric':             '--fink-editor-color-number',
+  'constant.language':            '--fink-editor-color-keyword',
   'constant.character.escape':    '--fink-editor-color-escape',
   'constant.character.escape.fink': '--fink-editor-color-number',
   'comment':                      '--fink-editor-color-comment',

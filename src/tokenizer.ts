@@ -23,13 +23,19 @@ export interface LexToken {
   endCol: number
 }
 
+// Idents the parser treats as control keywords (block starters, special
+// forms). The lexer emits these as plain Ident tokens, so keyword-ness is
+// recognised here by source text.
+const CONTROL_KEYWORDS = new Set(['fn', 'match', 'type', 'enum', 'union', 'import', 'try'])
+
 // Monaco scope string for each lexer TokenKind.
 // Multi-line tokens (BlockCont, BlockEnd) have no visible src — skip them.
 export function kindToScope(kind: string, src: string): string | null {
   switch (kind) {
     case 'Ident':
       if (src === '_') return 'keyword.control'
-      if (src === 'fn' || src === 'match') return 'keyword.control'
+      if (CONTROL_KEYWORDS.has(src)) return 'keyword.control'
+      if (src === 'true' || src === 'false') return 'constant.language'
       if (src === 'not' || src === 'and' || src === 'or' || src === 'xor' || src === 'in') return 'fink-operator'
       return 'variable.other.constant'
     case 'Int':

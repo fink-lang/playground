@@ -388,6 +388,15 @@ fn collect_tokens(ast: &Ast<'_>, id: AstId, tokens: &mut Vec<RawToken>) {
             }
         }
 
+        NodeKind::Type { params, body, .. }
+        | NodeKind::Enum { params, body, .. }
+        | NodeKind::Union { params, body, .. } => {
+            collect_tokens(ast, *params, tokens);
+            for stmt_id in body.items.iter() {
+                collect_tokens(ast, *stmt_id, tokens);
+            }
+        }
+
         // Leaves
         NodeKind::Ident(_)
         | NodeKind::LitBool(_)
@@ -508,6 +517,9 @@ fn node_kind_label<'a>(node: &'a ast::Node<'a>) -> (&'static str, String) {
         Try(_)             => ("Try",         String::new()),
         Block { sep, .. }  => ("Block",       sep.src.to_string()),
         Module { .. }      => ("Module",      String::new()),
+        Type { sep, .. }   => ("Type",        sep.src.to_string()),
+        Enum { sep, .. }   => ("Enum",        sep.src.to_string()),
+        Union { sep, .. }  => ("Union",       sep.src.to_string()),
         SynthIdent(n)      => ("SynthIdent",  format!("·$_{n}")),
         Token(s)           => ("Token",       s.to_string()),
     }
@@ -571,6 +583,10 @@ fn serialize_children(ast: &Ast<'_>, id: AstId) -> String {
         }
         Block { name, params, body, .. } => {
             parts.push(serialize_node(ast, *name));
+            parts.push(serialize_node(ast, *params));
+            for stmt_id in body.items.iter() { parts.push(serialize_node(ast, *stmt_id)); }
+        }
+        Type { params, body, .. } | Enum { params, body, .. } | Union { params, body, .. } => {
             parts.push(serialize_node(ast, *params));
             for stmt_id in body.items.iter() { parts.push(serialize_node(ast, *stmt_id)); }
         }
@@ -785,11 +801,12 @@ impl ParsedDocument {
             Err(_) => return,
         };
 
-        let ast = match fink::passes::partial::apply(parsed) {
-            Ok(a) => a,
+        let desugared = match fink::passes::desugar(parsed) {
+            Ok(d) => d,
             Err(_) => return,
         };
-        let scope_result = scopes::analyse(&ast, &[]);
+        let ast = desugared.ast;
+        let scope_result = desugared.scope;
 
         let node_count = ast.nodes.len();
         let mut node_locs: Vec<Option<Loc>> = vec![None; node_count];
@@ -990,7 +1007,7 @@ impl ParsedDocument {
             param_info: Some(&lifted.result.param_info),
             bind_kinds: None,
         };
-        let (code, map) = fink::passes::lifting::fmt::fmt_flat_mapped_native(&lifted.result.root, &ctx);
+        let (code, map) = cps_fmt::fmt_with_mapped_native(&lifted.result.root, &ctx);
         let code_escaped = escape_json(&code);
         let map_json = native_sourcemap_to_json(&map);
         format!(r#"{{"code":"{code_escaped}","map":{map_json}}}"#)
